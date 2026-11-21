@@ -1,0 +1,23 @@
+# Secrets and local data: never commit these
+.env
+*.env.local
+*.db
+*.sqlite*
+backend/uploads/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

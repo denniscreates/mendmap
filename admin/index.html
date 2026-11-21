@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MendMap · City dashboard</title>
+  <link rel="icon" href="logo.svg" />
+  <script>
+    // Theme before first paint: saved choice, else the system setting.
+    document.documentElement.dataset.theme =
+      localStorage.getItem("mm_theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css?v=7" />
+</head>
+<body>
+  <!-- Login -->
+  <section id="login" class="login hidden">
+    <button type="button" class="btn ghost theme-btn" data-theme-toggle title="Light / dark">◐</button>
+    <form id="login-form" class="login-card">
+      <img src="logo.svg" alt="" class="login-logo" />
+      <h1 class="wordmark">Mend<span>Map</span></h1>
+      <p class="tagline">Spot it. Snap it. Mended.</p>
+      <label>Email<input name="email" type="email" required autocomplete="username" /></label>
+      <label>Password<input name="password" type="password" required autocomplete="current-password" /></label>
+      <button type="submit" class="btn primary">Sign in to the city dashboard</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <section id="app" class="hidden">
+    <header class="topbar">
+      <div class="brand"><img src="logo.svg" alt="" /><span class="wordmark">Mend<span>Map</span></span><small>City dashboard</small></div>
+      <nav class="tabs">
+        <button data-view="list" class="active">Reports</button>
+        <button data-view="map">Map</button>
+        <button data-view="stats">Statistics</button>
+        <button data-view="fixers">Neighbour fixes <span id="fix-badge" class="count-badge hidden"></span></button>
+      </nav>
+      <div class="me"><a class="btn ghost" href="/city/" target="_blank" rel="noopener" title="Public transparency page">Public page ↗</a><span id="me-name"></span><button type="button" class="btn ghost theme-btn" data-theme-toggle title="Light / dark">◐</button><button id="logout" class="btn ghost">Sign out</button></div>
+    </header>
+
+    <div class="filters">
+      <select id="f-category"><option value="">All categories</option></select>
+      <select id="f-status">
+        <option value="">All statuses</option>
+        <option value="reported">Reported</option>
+        <option value="in_progress">In progress</option>
+        <option value="fixed">Fixed</option>
+      </select>
+      <input id="f-search" type="search" placeholder="Search description or #id" />
+      <span id="count" class="muted"></span>
+      <button id="refresh" class="btn ghost">↻ Refresh</button>
+    </div>
+
+    <main>
+      <div id="view-list" class="view">
+        <table class="reports">
+          <thead><tr>
+            <th data-sort="id">#</th>
+            <th data-sort="priority" class="sorted desc" title="0–100: severity, confirmations, age, nearby schools and hospitals">Priority</th>
+            <th data-sort="category">Category</th>
+            <th>Description</th>
+            <th data-sort="status">Status</th>
+            <th data-sort="confirmations" title="“I see this too”">👥</th>
+            <th data-sort="created_at">Reported</th>
+            <th data-sort="updated_at">Updated</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <p id="empty" class="muted center hidden">No reports match these filters.</p>
+      </div>
+      <div id="view-map" class="view hidden"><div id="map"></div></div>
+      <div id="view-fixers" class="view hidden">
+        <p class="muted">Residents can take safe jobs (illegal dumping, accessibility, other) in their own neighbourhood.
+          Check each “after” photo here. Every accepted fix is a fixer badge; every 20 badges earns a €10 reward,
+          paid by the city outside MendMap and recorded here.</p>
+        <h3>Waiting for a check</h3>
+        <div id="fix-pending" class="fix-list"></div>
+        <h3>Fixers and rewards</h3>
+        <table class="reports">
+          <thead><tr><th>Name</th><th>Neighbourhood</th><th>Accepted fixes</th><th>Rewards earned</th><th>Paid</th><th>Owed</th><th></th></tr></thead>
+          <tbody id="reward-rows"></tbody>
+        </table>
+        <p id="reward-empty" class="muted center hidden">No accepted neighbour fixes yet.</p>
+      </div>
+      <div id="view-stats" class="view hidden">
+        <div class="cards" id="stat-cards"></div>
+        <h3>Reports per category</h3>
+        <div id="stat-bars" class="bars"></div>
+        <p class="muted legend"><i class="dot reported"></i>Reported <i class="dot in_progress"></i>In progress <i class="dot fixed"></i>Fixed</p>
+      </div>
+    </main>
+
+    <!-- Detail drawer -->
+    <aside id="drawer" class="drawer hidden" aria-label="Report details">
+      <button id="drawer-close" class="close" aria-label="Close">×</button>
+      <div id="drawer-body"></div>
+    </aside>
+  </section>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js?v=8"></script>
+</body>
+</html>

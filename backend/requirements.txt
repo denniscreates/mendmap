@@ -1,0 +1,11 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+pymysql>=1.1
+cryptography>=42   # needed by PyMySQL for MySQL 8 caching_sha2_password auth
+pyjwt>=2.8
+python-multipart>=0.0.9
+httpx>=0.27
+pillow>=10      # generates the demo report photos (app/demo_images.py)
+anthropic>=0.40    # optional: AI photo check with Claude (needs ANTHROPIC_API_KEY)
+google-genai>=3.0  # optional: AI photo check + voice transcription with Gemini (needs GEMINI_API_KEY)

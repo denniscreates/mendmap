@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MendMap · How is our city doing?</title>
+  <meta name="description" content="Public MendMap numbers: how many street problems were reported, how many are fixed and how fast." />
+  <link rel="icon" href="/admin/logo.svg" />
+  <script>
+    document.documentElement.dataset.theme =
+      localStorage.getItem("mm_theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/admin/styles.css?v=4" />
+  <link rel="stylesheet" href="city.css?v=1" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="/admin/logo.svg" alt="" /><span class="wordmark">Mend<span>Map</span></span><small>Public city report</small></div>
+    <div class="me"><button type="button" class="btn ghost theme-btn" id="theme" title="Light / dark">◐</button></div>
+  </header>
+
+  <main class="city">
+    <section class="hero">
+      <h1>How is Prishtina doing?</h1>
+      <p class="muted">Every street problem citizens report in MendMap, and what the city did about it. Updated live.</p>
+    </section>
+
+    <div class="cards" id="cards"></div>
+
+    <section>
+      <h2>Where the problems are</h2>
+      <p class="muted">Brighter areas have more open reports. Fixed reports are not counted.</p>
+      <div id="heat" class="heat"></div>
+    </section>
+
+    <section class="two">
+      <div>
+        <h2>Neighbourhood leaderboard</h2>
+        <p class="muted">Who reports the most, and where the city fixes the most.</p>
+        <ol id="board" class="board"></ol>
+      </div>
+      <div>
+        <h2>Time to fix by category</h2>
+        <div id="cats" class="bars"></div>
+      </div>
+    </section>
+
+    <p class="muted foot">Spot it. Snap it. Mended. · Get the MendMap app to report a problem.</p>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+  <script src="city.js?v=1"></script>
+</body>
+</html>
