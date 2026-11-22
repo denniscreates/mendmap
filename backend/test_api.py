@@ -3,6 +3,7 @@ import os, tempfile
 os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(tempfile.mkdtemp(), "t.db")
 os.environ["ADMIN_PASSWORD"] = "admin123"
 os.environ["SEED_CREW"] = "1"
+os.environ["SEED_DEMO"] = "0"  # an empty city, also when backend/.env turns demo mode on
 os.environ["MENDMAP_AI"] = "off"  # never call the Claude API from tests
 from fastapi.testclient import TestClient
 from app.main import app
@@ -358,6 +359,20 @@ def test_edit_report():
         c.patch(f"/admin/reports/{r['id']}/status", headers={"Authorization": f"Bearer {adm['token']}"},
                 json={"status": "in_progress", "comment": "On it"})
         assert c.put(url, headers=h, data={"description": "Too late"}).status_code == 409
+
+
+def test_main_language():
+    """The main language is asked at sign-up and can be changed; only languages the app knows are accepted."""
+    with TestClient(app) as c:
+        r = reg(c, {"name": "Lula", "email": "lula@x.io", "password": "secret1", "language": "sq"})
+        assert r.status_code == 201 and r.json()["user"]["language"] == "sq"
+        h = {"Authorization": f"Bearer {r.json()['token']}"}
+        assert c.get("/me", headers=h).json()["language"] == "sq"
+        assert c.put("/me/language", headers=h, json={"language": "it"}).json()["language"] == "it"
+        assert c.put("/me/language", headers=h, json={"language": "xx"}).status_code == 422
+        assert reg(c, {"name": "Bad", "email": "bad@x.io", "password": "secret1", "language": "klingon"}).status_code == 422
+        old = reg(c, {"name": "Old", "email": "old@x.io", "password": "secret1"})  # older apps send no language
+        assert old.status_code == 201 and old.json()["user"]["language"] is None
 
 
 def test_rating():
@@ -1022,5 +1037,19 @@ def test_bookings():
         assert not bk._signed(payload, f"t={ts - 999},v1={sig}", secret)
 
 
+
+def test_demo_accounts():
+    with TestClient(app) as c:
+        assert c.get("/auth/demo-accounts").json() == []  # demo mode off: nothing listed
+        os.environ["SEED_DEMO"] = "1"
+        try:
+            got = {a["role"]: a for a in c.get("/auth/demo-accounts").json()}
+            assert got["admin"]["email"] == "admin@mendmap.local" and got["crew"]["password"] == "crew123"
+            r = c.post("/auth/login", json={"email": got["admin"]["email"], "password": got["admin"]["password"]})
+            assert r.status_code == 200 and r.json()["user"]["role"] == "admin"
+        finally:
+            os.environ["SEED_DEMO"] = "0"
+
+
 if __name__ == "__main__":
-    test_lifecycle(); test_gemini_stubbed(); test_rating(); test_mjeshtrit(); test_translate(); test_chat(); test_street_search(); test_community(); test_fraud(); test_gemini_hedge(); test_bookings(); test_edit_report(); print("OK")
+    test_lifecycle(); test_gemini_stubbed(); test_rating(); test_mjeshtrit(); test_translate(); test_chat(); test_street_search(); test_community(); test_fraud(); test_gemini_hedge(); test_bookings(); test_edit_report(); test_main_language(); test_demo_accounts(); print("OK")

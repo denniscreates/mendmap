@@ -7,6 +7,7 @@ Env:
 Replace all reports with a fresh Prishtina demo set (demo databases only!):
   python -m app.seed --reset-demo
 """
+import logging
 import os
 import sys
 from datetime import timedelta
@@ -14,7 +15,7 @@ from pathlib import Path
 
 from sqlalchemy import delete, select
 
-from .auth import hash_password
+from .auth import hash_password, verify_password
 from .db import Base, SessionLocal, engine
 from .demo_images import make_after_photo, make_photo
 from .models import Category, Confirmation, Report, StatusUpdate, User, migrate, now, PartnerReward, Mjeshter
@@ -131,12 +132,19 @@ def seed() -> None:
             db.add(User(
                 name="City Admin",
                 email=admin_email,
-                password_hash=hash_password(os.getenv("ADMIN_PASSWORD", "admin123")),
+                password_hash=hash_password(os.getenv("ADMIN_PASSWORD") or "admin123"),
                 role="admin",
             ))
         if os.getenv("SEED_DEMO") == "1" or os.getenv("SEED_CREW") == "1":
             _crew(db)
+        if os.getenv("SEED_DEMO") == "1":
+            _citizen(db, *CITIZENS[0])  # the demo resident, also when the database already has reports
         db.commit()
+        admin = db.scalar(select(User).where(User.email == admin_email))
+        if os.getenv("SEED_DEMO") != "1" and admin and verify_password("admin123", admin.password_hash):
+            logging.getLogger("mendmap").warning(
+                "The admin %s still has the default password admin123. Change it before real people use MendMap.",
+                admin_email)
 
         if os.getenv("SEED_DEMO") == "1" and not db.scalar(select(Report).limit(1)):
             seed_prishtina(db)
@@ -145,6 +153,27 @@ def seed() -> None:
         if os.getenv("SEED_DEMO") == "1" and not db.scalar(select(PartnerReward).limit(1)):
             db.add_all(PartnerReward(partner=p, title=t, details=d, emoji=e, cost=c, stock=n) for p, t, d, e, c, n in PARTNERS)
             db.commit()
+
+
+# One-tap demo sign-in (login screen and city dashboard), only while SEED_DEMO=1.
+# role, what it shows, email, password. An account is only listed while it still has this password.
+DEMO_ACCOUNTS = [
+    ("admin", "City admin: dashboard, status changes, rewards", "admin@mendmap.local", "admin123"),
+    ("crew", "Field crew: jobs route, after photos", CREW[1], CREW[2]),
+    ("citizen", "Resident: report, map, fix & earn", CITIZENS[0][1], CITIZENS[0][2]),
+    ("mjeshter", "Mjeshtër: verified skilled volunteer", MJESHTRIT[0][1], "mjeshter123"),
+]
+
+
+def demo_accounts(db) -> list[dict]:
+    if os.getenv("SEED_DEMO") != "1":
+        return []
+    out = []
+    for role, about, email, password in DEMO_ACCOUNTS:
+        u = db.scalar(select(User).where(User.email == email))
+        if u and verify_password(password, u.password_hash):
+            out.append({"role": role, "about": about, "name": u.name, "email": email, "password": password})
+    return out
 
 
 def _citizen(db, name: str, email: str, password: str) -> User:

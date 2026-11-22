@@ -326,6 +326,18 @@ async def quote(booking_id: int, body: schemas.QuoteIn, bg: BackgroundTasks,
         await _refresh_payouts(db, user)
         if not user.payouts_ready:
             raise HTTPException(409, "Set up payouts first, so you can get paid")
+        if b.payment_intent:  # the resident may be paying the old price right now: don't lose that payment
+            pi = await stripe_call("GET", f"/payment_intents/{b.payment_intent}")
+            if pi.get("status") == "succeeded":
+                _mark_paid(db, b, "stripe", pi.get("latest_charge"))
+                raise HTTPException(409, "This booking is already paid")
+            if pi.get("status") in ("processing", "requires_capture", "requires_action"):
+                raise HTTPException(409, "The resident is paying right now. Try again in a minute.")
+            if pi.get("status") != "canceled":  # so the old price can't be paid any more
+                try:
+                    await stripe_call("POST", f"/payment_intents/{b.payment_intent}/cancel", {})
+                except HTTPException:
+                    pass
     b.fee_cents = round(body.fee * 100)
     b.quote_note = (body.note or "").strip() or None
     b.status, b.quoted_at, b.updated_at = "quoted", now(), now()
@@ -418,7 +430,8 @@ async def confirm_payment(booking_id: int, bg: BackgroundTasks,
         if not stripe_on() or not b.payment_intent:
             raise HTTPException(409, "There's no payment to check")
         pi = await stripe_call("GET", f"/payment_intents/{b.payment_intent}")
-        ok = pi.get("status") == "succeeded" and str(pi.get("metadata", {}).get("booking_id")) == str(b.id)
+        ok = (pi.get("status") == "succeeded" and str(pi.get("metadata", {}).get("booking_id")) == str(b.id)
+              and pi.get("amount") == b.fee_cents)
         mode, charge = "stripe", pi.get("latest_charge")
     if not ok:
         raise HTTPException(402, "The payment didn't go through")

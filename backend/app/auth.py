@@ -3,6 +3,7 @@ import hmac
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -12,7 +13,22 @@ from sqlalchemy.orm import Session
 from .db import get_db
 from .models import User
 
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-only-secret-change-me-in-production-0123456789")
+def _secret() -> str:
+    """JWT_SECRET from the env, or a random one made once and kept in backend/private/ (not in git).
+    Never a fixed default: anyone who knows it could sign in as any user, admins included."""
+    if os.getenv("JWT_SECRET"):
+        return os.environ["JWT_SECRET"]
+    path = Path(__file__).resolve().parent.parent / "private" / "jwt_secret"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(path, "x", encoding="utf-8") as f:  # only the first server to start creates it
+            f.write(secrets.token_urlsafe(48))
+    except FileExistsError:
+        pass
+    return path.read_text(encoding="utf-8").strip()
+
+
+JWT_SECRET = _secret()
 JWT_ALG = "HS256"
 TOKEN_DAYS = 30
 _ITER = 200_000

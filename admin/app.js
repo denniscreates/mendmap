@@ -72,6 +72,21 @@ $("#login-form").addEventListener("submit", async (e) => {
   }
 });
 
+// Demo mode (SEED_DEMO=1): one tap signs judges in as the demo city admin.
+api("/auth/demo-accounts").then((list) => {
+  const a = list.find((x) => x.role === "admin");
+  if (!a) return;
+  $("#demo-admin").classList.remove("hidden");
+  $("#demo-admin-hint").classList.remove("hidden");
+  $("#demo-admin-hint").textContent = `Demo account: ${a.email} / ${a.password}`;
+  $("#demo-admin").addEventListener("click", () => {
+    const f = $("#login-form");
+    f.elements.email.value = a.email;
+    f.elements.password.value = a.password;
+    f.requestSubmit();
+  });
+}).catch(() => {});
+
 function logout() {
   state.token = null; state.user = null;
   localStorage.removeItem("mm_token"); localStorage.removeItem("mm_user");

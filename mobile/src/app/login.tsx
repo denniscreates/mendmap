@@ -5,8 +5,9 @@ import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Vibr
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AreaPicker, ELSEWHERE } from "../components/area";
 import { CodeBoxes } from "../components/code";
+import { LanguagePicker } from "../components/LanguagePicker";
 import { Button, Input, LogoPin, Segmented, T, Wordmark } from "../components/ui";
-import { api } from "../lib/api";
+import { api, type DemoAccount } from "../lib/api";
 import { useAuth, type Provider } from "../lib/auth";
 import { LANG_NAME, useI18n, type Lang } from "../lib/i18n";
 import { useStyles, useTheme, type Palette } from "../lib/theme";
@@ -17,11 +18,18 @@ type Step = "form" | "social" | "code";
 // Server messages that mean "this code can't be used any more": clear the boxes.
 const BAD_CODE = new Set(["Wrong code", "The code expired. Ask for a new one", "Too many tries. Ask for a new code"]);
 
+const DEMO_ROLE = {
+  admin: { label: "demoAdmin", about: "demoAdminAbout", icon: "shield-checkmark", color: "#6d4bd8" },
+  crew: { label: "demoCrew", about: "demoCrewAbout", icon: "construct", color: "#e0901c" },
+  citizen: { label: "demoCitizen", about: "demoCitizenAbout", icon: "person", color: "#2f6fe4" },
+  mjeshter: { label: "demoMjeshter", about: "demoMjeshterAbout", icon: "hammer", color: "#1f9d6b" },
+} as const;
+
 const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
 export default function Login() {
   const { user, signIn, signUp, socialSignIn } = useAuth();
-  const { t, tErr, lang, localLang, setLang } = useI18n();
+  const { t, tErr, lang, langs, setLang, mainLang, deviceLang, setMainLang } = useI18n();
   const { colors } = useTheme();
   const s = useStyles(makeStyles);
   const [step, setStep] = useState<Step>("form");
@@ -37,11 +45,21 @@ export default function Login() {
   const [existing, setExisting] = useState(false);
   const [resendAt, setResendAt] = useState(0);
   const [expiresAt, setExpiresAt] = useState(0);
-  const [clock, setClock] = useState(Date.now());
+  const [clock, setClock] = useState(() => Date.now());
   const [shake, setShake] = useState(0);
   const [codeError, setCodeError] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [demo, setDemo] = useState<DemoAccount[]>([]);
+  const [demoBusy, setDemoBusy] = useState<string | null>(null);
+  // Main language for the new account: suggested from the phone, switches the screen to it when picked.
+  const mainPick = mainLang ?? deviceLang ?? lang;
+  const pickMain = (l: Lang) => setMainLang(l);
+
+  // Demo accounts (admin, crew, resident, mjeshtër) for judges: only listed while the server is in demo mode.
+  useEffect(() => {
+    api.demoAccounts().then(setDemo, () => setDemo([]));
+  }, []);
 
   // One clock tick a second while the code screen is open (resend wait and expiry).
   useEffect(() => {
@@ -75,6 +93,14 @@ export default function Login() {
     }
   };
 
+  const demoSignIn = async (a: DemoAccount) => {
+    setDemoBusy(a.email);
+    setEmail(a.email);
+    setPassword(a.password);
+    await run(() => signIn(a.email, a.password));
+    setDemoBusy(null);
+  };
+
   const sendCode = (social: boolean) =>
     run(async () => {
       const sent = await api.sendOtp(email.trim(), social ? "social" : "register");
@@ -95,8 +121,8 @@ export default function Login() {
     const home = area === ELSEWHERE ? null : area;
     return run(() =>
       provider
-        ? socialSignIn(provider, name.trim(), email.trim(), home, value)
-        : signUp(name.trim(), email.trim(), password, home, value),
+        ? socialSignIn(provider, name.trim(), email.trim(), home, value, mainPick)
+        : signUp(name.trim(), email.trim(), password, home, value, mainPick),
     );
   };
 
@@ -146,15 +172,13 @@ export default function Login() {
           </Pressable>
         )}
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
-          {localLang && step === "form" && (
-            <View style={s.lang}>
+          {/* English, the local language and the person's own language (e.g. Shqip for an Albanian in Italy). */}
+          {langs.length > 1 && step === "form" && (
+            <View style={[s.lang, { width: langs.length > 2 ? 330 : 210 }]}>
               <Segmented<Lang>
                 value={lang}
                 onChange={setLang}
-                options={[
-                  { value: "en", label: LANG_NAME.en },
-                  { value: localLang, label: (LANG_NAME[localLang] ?? localLang.toUpperCase()) },
-                ]}
+                options={langs.map((l) => ({ value: l, label: LANG_NAME[l] ?? l.toUpperCase() }))}
               />
             </View>
           )}
@@ -204,6 +228,13 @@ export default function Login() {
                     <AreaPicker value={area} onChange={setArea} allowElsewhere />
                   </View>
                 )}
+                {mode === "register" && (
+                  <View style={{ gap: 6, marginTop: 4 }}>
+                    <T medium>{t("mainLang")}</T>
+                    <T style={s.muted}>{t("mainLangHint")}</T>
+                    <LanguagePicker value={mainPick} onChange={pickMain} />
+                  </View>
+                )}
                 {!!error && <ErrorLine text={error} />}
                 <Button title={mode === "login" ? t("signIn") : t("createAccount")} onPress={submitForm} loading={busy} />
 
@@ -218,12 +249,38 @@ export default function Login() {
                   <SocialButton provider="apple" label={t("withApple")} onPress={() => openSocial("apple")} />
                 )}
 
+                {mode === "login" && demo.length > 0 && (
+                  <View style={s.demoList}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Ionicons name="people" size={18} color={colors.accent} />
+                      <T medium style={{ fontSize: 16 }}>{t("demoTitle")}</T>
+                    </View>
+                    <T style={[s.muted, { textAlign: "left", fontSize: 13 }]}>{t("demoHint")}</T>
+                    {demo.map((a) => (
+                      <Pressable key={a.email} onPress={() => !busy && demoSignIn(a)} disabled={busy}
+                        style={({ pressed }) => [s.demoRow, pressed && { opacity: 0.7 }]}
+                        accessibilityRole="button" accessibilityLabel={`${t("signIn")}: ${t(DEMO_ROLE[a.role].label)}`}>
+                        <View style={[s.demoIcon, { backgroundColor: DEMO_ROLE[a.role].color }]}>
+                          <Ionicons name={DEMO_ROLE[a.role].icon} size={18} color="#fff" />
+                        </View>
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <T medium>{t(DEMO_ROLE[a.role].label)} · {a.name}</T>
+                          <T style={{ color: colors.muted, fontSize: 12 }}>{t(DEMO_ROLE[a.role].about)}</T>
+                          <T style={{ color: colors.muted, fontSize: 12 }}>{a.email} / {a.password}</T>
+                        </View>
+                        <Ionicons name={demoBusy === a.email ? "hourglass-outline" : "log-in-outline"} size={20} color={colors.accent} />
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+
                 <Pressable onPress={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }} style={{ padding: 12 }}>
                   <T style={s.muted}>
                     {mode === "login" ? t("newHere") : t("haveAccount")}
                     <T medium style={s.link}>{mode === "login" ? t("createAnAccount") : t("signIn")}</T>
                   </T>
                 </Pressable>
+                <T style={[s.muted, { textAlign: "center", fontSize: 12, marginTop: 8 }]}>{t("madeBy", { name: "Denis Ibrahimi" })}</T>
               </View>
             </>
           )}
@@ -259,6 +316,12 @@ export default function Login() {
                 <T style={s.muted}>{t("socialAreaHint")}</T>
                 <AreaPicker value={area} onChange={setArea} allowElsewhere />
               </View>
+              <View style={{ gap: 6, marginTop: 4 }}>
+                <T medium>{t("mainLang")}</T>
+                <T style={s.muted}>{t("mainLangHint")}</T>
+                <LanguagePicker value={mainPick} onChange={pickMain} />
+              </View>
+
               {!!error && <ErrorLine text={error} />}
               <Button title={t("sendCode")} onPress={submitSocial} loading={busy} />
             </View>
@@ -349,7 +412,8 @@ const makeStyles = (c: Palette) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: c.bg },
     scroll: { flexGrow: 1, justifyContent: "center", padding: 24 },
-    lang: { position: "absolute", top: 12, right: 24, width: 190 },
+    // In the flow above the logo (not floating), so it never covers it on small phones.
+    lang: { alignSelf: "flex-end", maxWidth: "100%", marginBottom: 16 },
     backBtn: { flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 14, paddingTop: 8, alignSelf: "flex-start" },
     hero: { alignItems: "center", gap: 6, marginBottom: 28 },
     tagline: { color: c.muted, fontSize: 16 },
@@ -377,6 +441,9 @@ const makeStyles = (c: Palette) =>
       borderRadius: 14, backgroundColor: c.surface2, borderWidth: 1, borderColor: c.line,
     },
     demoCode: { fontSize: 24, letterSpacing: 6 },
+    demoList: { gap: 8, marginTop: 8, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: c.line, backgroundColor: c.surface },
+    demoRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 10, borderRadius: 12, backgroundColor: c.surface2 },
+    demoIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
     fillBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: c.blue },
     mailIcon: {
       alignSelf: "center", width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center",

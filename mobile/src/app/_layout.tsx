@@ -6,11 +6,13 @@ import { useEffect, useState } from "react";
 import { Alert, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { Intro } from "../components/Intro";
+import { Welcome } from "../components/Welcome";
 import { AuthProvider } from "../lib/auth";
 import { startDraftSync } from "../lib/drafts";
 import { I18nProvider, useI18n } from "../lib/i18n";
 import { fonts, ThemeProvider, useTheme } from "../lib/theme";
 import { installWebAlert } from "../lib/webAlert";
+import { onShowWelcome, welcomeHidden } from "../lib/welcome";
 
 installWebAlert(); // browser: make "Are you sure?" dialogs work
 
@@ -33,6 +35,13 @@ export default function RootLayout() {
 
 function Root({ fontsLoaded }: { fontsLoaded: boolean }) {
   const [showIntro, setShowIntro] = useState(true);
+  const [showWelcome, setShowWelcome] = useState(false);
+  useEffect(() => onShowWelcome(() => setShowWelcome(true)), []);
+  // Our ad and the how-to open as soon as the intro ends (unless the person said "don't show again").
+  const introDone = () => {
+    setShowIntro(false);
+    welcomeHidden().then((hidden) => !hidden && setShowWelcome(true));
+  };
   const { colors } = useTheme();
   const { t } = useI18n();
 
@@ -87,7 +96,8 @@ function Root({ fontsLoaded }: { fontsLoaded: boolean }) {
           <Stack.Screen name="booking/[id]" options={{ title: t("bkTitle") }} />
         </Stack>
       )}
-      {(showIntro || !fontsLoaded) && <Intro onDone={() => setShowIntro(false)} />}
+      {fontsLoaded && !showIntro && showWelcome && <Welcome onClose={() => setShowWelcome(false)} />}
+      {(showIntro || !fontsLoaded) && <Intro onDone={introDone} />}
     </View>
   );
 }

@@ -35,7 +35,7 @@ from .models import (
     Category, Confirmation, Mjeshter, OtpCode, PartnerReward, Report, RewardClaim, StatusUpdate, User, migrate, now,
 )
 from .push import send_many, send_status_push
-from .seed import seed
+from .seed import demo_accounts, seed
 
 ROOT = Path(__file__).resolve().parent.parent
 UPLOADS = ROOT / "uploads"
@@ -60,9 +60,11 @@ async def lifespan(_: FastAPI):
     seed()
     reminders = asyncio.create_task(community.reminder_loop())
     payouts = asyncio.create_task(bookings.release_loop())  # pays mjeshtrit when the resident doesn't answer
+    catchup = asyncio.create_task(ai_catchup_loop())  # AI checks for reports posted while the AI was down
     yield
     reminders.cancel()
     payouts.cancel()
+    catchup.cancel()
 
 
 app = FastAPI(title="MendMap API", version="2.0.0", lifespan=lifespan)
@@ -248,6 +250,25 @@ async def review_then_alert(report_id: int) -> None:
 
 
 AI_RETRY_S = (90, 300)
+AI_CATCHUP_S = 1800  # every 30 minutes, check reports the AI missed (e.g. the daily Gemini quota ran out)
+
+
+async def ai_catchup_loop() -> None:
+    """Reports posted while the AI was down get their check (description, severity, blurring) once it is back."""
+    while True:
+        await asyncio.sleep(AI_CATCHUP_S)
+        if not ai.provider():
+            continue
+        try:
+            with SessionLocal() as db:
+                since = now() - timedelta(days=14)
+                todo = db.scalars(select(Report.id).where(Report.photo_url.is_not(None), Report.ai_is_problem.is_(None),
+                                                          Report.created_at >= since).order_by(Report.id).limit(20)).all()
+            for rid in todo:
+                if not await ai_review(rid):
+                    break  # still busy: try again next round
+        except Exception as exc:
+            logging.getLogger("mendmap").warning("AI catch-up failed: %s", exc)
 
 
 async def alert_neighbours(report_id: int, kind: str) -> None:
@@ -278,6 +299,15 @@ async def alert_neighbours(report_id: int, kind: str) -> None:
 
 
 # ---------- auth ----------
+
+def _check_lang(code: str | None) -> str | None:
+    """A main language the app can show (English, a hand-made one, or one the AI translates)."""
+    if code is None or not code.strip():
+        return None
+    if code not in languages.LANGS:
+        raise HTTPException(422, "Unknown language")
+    return code
+
 
 def _check_area(name: str | None) -> str | None:
     if name is None or not name.strip():
@@ -354,8 +384,12 @@ def social_sign_in(body: schemas.SocialIn, db: Session = Depends(get_db)):
         user = User(
             name=body.name.strip(), email=email, password_hash=hash_password(secrets.token_urlsafe(24)),
             neighbourhood=_check_area(body.neighbourhood), auth_provider=body.provider,
+            language=_check_lang(body.language),
         )
         db.add(user)
+        db.commit()
+    elif body.language and not user.language:
+        user.language = _check_lang(body.language)
         db.commit()
     return {"token": create_token(user), "user": user, "is_new": is_new}
 
@@ -366,10 +400,11 @@ def register(body: schemas.Register, db: Session = Depends(get_db)):
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "An account with this email already exists")
     area = _check_area(body.neighbourhood)
+    lang = _check_lang(body.language)
     _check_otp(db, email, body.code)
     user = User(
         name=body.name.strip(), email=email, password_hash=hash_password(body.password),
-        neighbourhood=area, auth_provider="email",
+        neighbourhood=area, auth_provider="email", language=lang,
     )
     db.add(user)
     db.commit()
@@ -382,6 +417,13 @@ def login(body: schemas.Login, db: Session = Depends(get_db)):
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(401, "Wrong email or password")
     return {"token": create_token(user), "user": user}
+
+
+@app.get("/auth/demo-accounts", tags=["auth"])
+def demo_accounts_list(db: Session = Depends(get_db)):
+    """Demo accounts for judges and testers (one tap on the sign-in screen). Empty unless SEED_DEMO=1,
+    and an account is left out once its password has been changed."""
+    return demo_accounts(db)
 
 
 @app.get("/me", response_model=schemas.UserOut, tags=["me"])
@@ -411,6 +453,15 @@ def set_home(body: schemas.HomeIn, user: User = Depends(current_user), db: Sessi
 def set_neighbourhood(body: schemas.NeighbourhoodIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     u = db.get(User, user.id)
     u.neighbourhood = _check_area(body.neighbourhood)
+    db.commit()
+    return u
+
+
+@app.put("/me/language", response_model=schemas.UserOut, tags=["me"])
+def set_language(body: schemas.LanguageIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The person's main language: the app offers it everywhere, next to English and the local language."""
+    u = db.get(User, user.id)
+    u.language = _check_lang(body.language)
     db.commit()
     return u
 

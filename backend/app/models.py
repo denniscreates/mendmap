@@ -27,6 +27,8 @@ class User(Base):
     home_lng: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Neighbourhood the user lives in (asked at sign-up): they may fix problems there.
     neighbourhood: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # The person's main language (e.g. "sq"): the app always offers it, also when they travel abroad.
+    language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # Skilled volunteer profile (mjeshtër), if they applied. Loaded with the user.
     mjeshter: Mapped["Mjeshter | None"] = relationship(back_populates="user", lazy="selectin", uselist=False)
 
@@ -344,7 +346,8 @@ class Booking(Base):
 NEW_COLUMNS = {
     "chat_messages": {"kind": "VARCHAR(20) NOT NULL DEFAULT 'message'", "event_id": "INTEGER"},
     "users": {"home_lat": "FLOAT", "home_lng": "FLOAT", "neighbourhood": "VARCHAR(60)", "rewards_paid": "INTEGER NOT NULL DEFAULT 0",
-              "auth_provider": "VARCHAR(20)", "stripe_account": "VARCHAR(60)", "payouts_ready": "INTEGER NOT NULL DEFAULT 0"},
+              "auth_provider": "VARCHAR(20)", "stripe_account": "VARCHAR(60)", "payouts_ready": "INTEGER NOT NULL DEFAULT 0",
+              "language": "VARCHAR(8)"},
     "reports": {
         "severity": "INTEGER", "after_photo_url": "VARCHAR(500)", "voice_url": "VARCHAR(500)", "voice_text": "TEXT",
         "claimed_by": "INTEGER", "claimed_at": "DATETIME", "fix_status": "VARCHAR(20)",

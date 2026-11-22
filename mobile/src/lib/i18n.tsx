@@ -202,6 +202,32 @@ const en = {
   chatRules: "Be kind. No insults, ads or phone numbers.",
   tagline: "Spot it. Snap it. Mended.",
   skip: "Skip",
+  wcClose: "Close",
+  madeBy: "Made by {name}",
+  demoTitle: "Demo accounts",
+  demoHint: "For judges and testers: tap one to sign in.",
+  demoAdmin: "City admin",
+  demoCrew: "Field crew",
+  demoCitizen: "Resident",
+  demoMjeshter: "Mjeshtër",
+  demoAdminAbout: "Jobs, all reports; the full city dashboard is at /admin",
+  demoCrewAbout: "Jobs route, close jobs with an after photo",
+  demoCitizenAbout: "Report problems, map, fix & earn, rewards",
+  demoMjeshterAbout: "Verified skilled volunteer: takes skilled jobs",
+  mainLang: "Your main language",
+  mainLangPick: "Pick your language",
+  mainLangHint: "MendMap always offers it, also when you travel. E.g. Shqip in Italy, next to Italiano and English.",
+  langSearch: "Search languages",
+  langNone: "No language found",
+  wcTabAd: "MendMap",
+  wcTabHow: "How to use",
+  wcNextVideo: "Watch how to use the app",
+  wcSound: "Sound on",
+  wcTutText: "The real app, step by step. You can watch this again in Settings.",
+  wcStart: "Start using MendMap",
+  wcHide: "Don't show this again",
+  wcHowToRow: "How MendMap works",
+  wcAdTitle: "Spot it. Snap it. Mended.",
   // login
   yourName: "Your name",
   email: "Email",
@@ -738,6 +764,32 @@ const sq: Dict = {
   chatRules: "Ji i sjellshëm. Pa fyerje, reklama apo numra telefoni.",
   tagline: "Vëreje. Fotografoje. U rregullua.",
   skip: "Kalo",
+  wcClose: "Mbyll",
+  madeBy: "Krijuar nga {name}",
+  demoTitle: "Llogari demo",
+  demoHint: "Për jurinë dhe testuesit: prekni njërën për t'u kyçur.",
+  demoAdmin: "Administratori i qytetit",
+  demoCrew: "Ekipi në terren",
+  demoCitizen: "Banor",
+  demoMjeshter: "Mjeshtër",
+  demoAdminAbout: "Punët, të gjitha raportimet; paneli i plotë i qytetit është te /admin",
+  demoCrewAbout: "Rruga e punëve, mbyll punët me foto pas",
+  demoCitizenAbout: "Raporto probleme, harta, rregullo e fito, shpërblime",
+  demoMjeshterAbout: "Vullnetar i verifikuar me zanat: merr punë me mjeshtëri",
+  mainLang: "Gjuha juaj kryesore",
+  mainLangPick: "Zgjidhni gjuhën tuaj",
+  mainLangHint: "MendMap jua ofron gjithmonë, edhe kur udhëtoni. P.sh. shqipen në Itali, krahas italishtes dhe anglishtes.",
+  langSearch: "Kërko gjuhë",
+  langNone: "Nuk u gjet asnjë gjuhë",
+  wcTabAd: "MendMap",
+  wcTabHow: "Si përdoret",
+  wcNextVideo: "Shiko si përdoret aplikacioni",
+  wcSound: "Me zë",
+  wcTutText: "Aplikacioni i vërtetë, hap pas hapi. Mund ta shihni sërish te Cilësimet.",
+  wcStart: "Fillo me MendMap",
+  wcHide: "Mos e shfaq më",
+  wcHowToRow: "Si funksionon MendMap",
+  wcAdTitle: "Shiheni. Fotografojeni. Rregulluar.",
   yourName: "Emri juaj",
   email: "Email",
   password: "Fjalëkalimi",
@@ -1263,6 +1315,32 @@ const hu: Dict = {
   chatRules: "Légy kedves. Se sértés, se reklám, se telefonszám.",
   tagline: "Észreveszed. Lefotózod. Megjavítjuk.",
   skip: "Kihagyás",
+  wcClose: "Bezárás",
+  madeBy: "Készítette: {name}",
+  demoTitle: "Demó fiókok",
+  demoHint: "Zsűrinek és tesztelőknek: koppints egyre a belépéshez.",
+  demoAdmin: "Városi admin",
+  demoCrew: "Terepi csapat",
+  demoCitizen: "Lakos",
+  demoMjeshter: "Mesterember",
+  demoAdminAbout: "Munkák, minden bejelentés; a teljes városi felület a /admin címen",
+  demoCrewAbout: "Munkák útvonala, lezárás utána-fotóval",
+  demoCitizenAbout: "Bejelentés, térkép, javíts és nyerj, jutalmak",
+  demoMjeshterAbout: "Ellenőrzött szakember önkéntes: szakmunkákat vállal",
+  mainLang: "Az anyanyelved",
+  mainLangPick: "Válaszd ki a nyelved",
+  mainLangHint: "A MendMap mindig felkínálja, utazás közben is. Pl. magyarul Olaszországban, az olasz és az angol mellett.",
+  langSearch: "Nyelv keresése",
+  langNone: "Nincs ilyen nyelv",
+  wcTabAd: "MendMap",
+  wcTabHow: "Használat",
+  wcNextVideo: "Nézd meg, hogyan működik",
+  wcSound: "Hang be",
+  wcTutText: "Az igazi app, lépésről lépésre. A Beállításokban újra megnézheted.",
+  wcStart: "Kezdjük",
+  wcHide: "Ne mutasd többet",
+  wcHowToRow: "Hogyan működik a MendMap",
+  wcAdTitle: "Észreveszed. Lefotózod. Megjavítják.",
   yourName: "Neved",
   email: "E-mail",
   password: "Jelszó",
@@ -1676,6 +1754,7 @@ const API_ERRORS: Record<string, Partial<Record<"sq" | "hu", string>>> = {
   "Only the person who reported it can edit it": { sq: "Vetëm kush e raportoi mund ta ndryshojë", hu: "Csak a bejelentő szerkesztheti" },
   "Someone is already working on this, so it can't be edited": { sq: "Dikush po punon tashmë për këtë, ndaj nuk ndryshohet", hu: "Valaki már dolgozik rajta, ezért nem szerkeszthető" },
   "Up to 5 photos": { sq: "Deri në 5 foto", hu: "Legfeljebb 5 fotó" },
+  "Unknown language": { sq: "Gjuhë e panjohur", hu: "Ismeretlen nyelv" },
   "This booking is already paid": { sq: "Ky rezervim është paguar tashmë", hu: "Ez a foglalás már ki van fizetve" },
   "The payment didn't go through": { sq: "Pagesa nuk kaloi", hu: "A fizetés nem sikerült" },
   "Only a paid job can be marked done": { sq: "Vetëm një punë e paguar mund të shënohet e kryer", hu: "Csak kifizetett munka jelölhető késznek" },
@@ -1777,11 +1856,20 @@ async function fetchRemote(lang: string): Promise<Remote | null> {
 
 // ---------- provider ----------
 const KEY = "mendmap.lang";
+const MAIN_KEY = "mendmap.mainLang";
 type I18nState = {
   lang: Lang;
   /** The country's official language offered next to English (null = English only, e.g. UK or Ireland). */
   localLang: string | null;
+  /** The person's own language, e.g. Shqip for an Albanian. Offered everywhere, also when travelling abroad. */
+  mainLang: string | null;
+  /** The languages to switch between: English, the local language and the main language (no doubles). */
+  langs: Lang[];
   setLang: (l: Lang) => void;
+  /** Set the main language and switch the app to it. */
+  setMainLang: (l: Lang | null) => void;
+  /** The phone's own language when the app can show it, e.g. "sq" on a phone set to Albanian. */
+  deviceLang: Lang | null;
   /** True while an AI translation of the chosen language is being downloaded. */
   translating: boolean;
   t: (key: TKey, vars?: Record<string, string | number>) => string;
@@ -1822,6 +1910,7 @@ async function countryFromIp(): Promise<string | null> {
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [country, setCountry] = useState<string | null>(regionFromDevice());
   const [chosen, setChosen] = useState<Lang | null>(null);
+  const [mainLang, setMain] = useState<Lang | null>(null);
   const [remote, setRemote] = useState<Record<string, Remote>>({});
   const [translating, setTranslating] = useState(false);
   const ipCountry = useRef<string | null>(null);
@@ -1840,6 +1929,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     AsyncStorage.getItem(KEY).then((v) => {
       if (v && (v === "en" || LANG_NAME[v])) setChosen(v);
+    });
+    AsyncStorage.getItem(MAIN_KEY).then((v) => {
+      if (v && LANG_NAME[v]) setMain(v);
     });
     // The country comes from the IP address. If that fails, GPS (when already allowed), then the phone's region.
     const check = async () => {
@@ -1860,10 +1952,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [detect]);
 
   const localLang = (country && COUNTRY_LANG[country]) || null;
-  const deviceLang = Localization.getLocales()[0]?.languageCode;
-  // Default: the local language if the phone is set to it, otherwise English.
-  let lang: Lang = chosen ?? (localLang && deviceLang === localLang ? localLang : "en");
-  if (lang !== "en" && lang !== localLang) lang = "en"; // moved to another country
+  const phoneLang = Localization.getLocales()[0]?.languageCode ?? null;
+  const deviceLang = phoneLang && LANG_NAME[phoneLang] ? phoneLang : null;
+  const langs = useMemo(() => [...new Set(["en", localLang, mainLang].filter((l): l is Lang => !!l))], [localLang, mainLang]);
+  // Default: the main language; else the local language if the phone is set to it; else English.
+  let lang: Lang = chosen ?? mainLang ?? (localLang && deviceLang === localLang ? localLang : "en");
+  if (!langs.includes(lang)) lang = mainLang ?? "en"; // moved to another country: keep the main language
 
   // A language without a hand-made translation: use the phone's copy, refresh it from the server.
   useEffect(() => {
@@ -1902,10 +1996,21 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     return {
       lang,
       localLang,
+      mainLang,
+      langs,
+      deviceLang,
       translating,
       setLang: (l) => {
         setChosen(l);
         AsyncStorage.setItem(KEY, l);
+      },
+      setMainLang: (l) => {
+        setMain(l);
+        if (l) {
+          AsyncStorage.setItem(MAIN_KEY, l);
+          setChosen(l);
+          AsyncStorage.setItem(KEY, l);
+        } else AsyncStorage.removeItem(MAIN_KEY);
       },
       t: (key, vars) => {
         let s = dict[key] ?? en[key];
@@ -1916,7 +2021,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       locale: dateLocale(lang),
       updateCountryFrom: (c) => void detect(c),
     };
-  }, [lang, localLang, remote, translating, detect]);
+  }, [lang, localLang, mainLang, langs, deviceLang, remote, translating, detect]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

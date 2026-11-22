@@ -31,7 +31,6 @@ export default function Jobs() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => subscribeQueue(setQueue), []);
-  useEffect(() => startCrewSync(() => void load()), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,6 +60,12 @@ export default function Jobs() {
     }
   }, [here, tErr]);
   useFocusEffect(useCallback(() => void load(), [load]));
+  // When queued fixes are sent, reload with the newest load (not the one from the first render).
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+  useEffect(() => startCrewSync(() => void loadRef.current()), []);
 
   const queuedIds = new Set(queue.map((q) => q.id));
   const visible = jobs.filter((j) => !queuedIds.has(j.id));

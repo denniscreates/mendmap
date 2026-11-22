@@ -19,6 +19,8 @@ function resolveBaseUrl(): string {
   const isTunnel = !/:\d+$/.test(devServer); // tunnel hosts have no port and use https
   return `${isTunnel ? "https" : "http"}://${devServer}/api`;
 }
+export type DemoAccount = { role: "admin" | "crew" | "citizen" | "mjeshter"; about: string; name: string; email: string; password: string };
+
 export const API_URL = resolveBaseUrl();
 export const photoUrl = (path: string | null) => (path ? (path.startsWith("http") ? path : API_URL + path) : null);
 
@@ -48,6 +50,7 @@ export type User = {
   home_lat?: number | null;
   home_lng?: number | null;
   neighbourhood?: string | null;
+  language?: string | null; // main language, e.g. "sq"
   mjeshter_status?: "pending" | "approved" | "rejected" | null;
   mjeshter_skills?: string[]; // verified skills (only when approved)
 };
@@ -372,11 +375,13 @@ export const api = {
   /** Emails a 6-digit code. In demo mode (no email service) the code comes back in `demo_code`. */
   sendOtp: (email: string, purpose: "register" | "social") =>
     request<OtpSent>("/auth/otp/send", { method: "POST", body: JSON.stringify({ email, purpose }) }),
-  register: (name: string, email: string, password: string, neighbourhood: string | null, code: string) =>
-    request<Auth>("/auth/register", { method: "POST", body: JSON.stringify({ name, email, password, neighbourhood, code }) }),
+  register: (name: string, email: string, password: string, neighbourhood: string | null, code: string, language: string | null) =>
+    request<Auth>("/auth/register", { method: "POST", body: JSON.stringify({ name, email, password, neighbourhood, code, language }) }),
   /** Demo Google/Apple sign-in: the email is confirmed with the one-time code. */
-  social: (provider: "google" | "apple", name: string, email: string, neighbourhood: string | null, code: string) =>
-    request<Auth>("/auth/social", { method: "POST", body: JSON.stringify({ provider, name, email, neighbourhood, code }) }),
+  social: (provider: "google" | "apple", name: string, email: string, neighbourhood: string | null, code: string, language: string | null) =>
+    request<Auth>("/auth/social", { method: "POST", body: JSON.stringify({ provider, name, email, neighbourhood, code, language }) }),
+  /** The main language, offered everywhere next to English and the local language. */
+  setLanguage: (language: string) => request<User>("/me/language", { method: "PUT", body: JSON.stringify({ language }) }),
   neighbourhoods: () => request<string[]>("/neighbourhoods"),
   setNeighbourhood: (neighbourhood: string | null) =>
     request<User>("/me/neighbourhood", { method: "PUT", body: JSON.stringify({ neighbourhood }) }),
@@ -473,6 +478,8 @@ export const api = {
   chatDelete: (id: number) => request<null>(`/chat/messages/${id}`, { method: "DELETE" }),
   rewards: () => request<Rewards>("/rewards"),
   claimReward: (id: number) => request<RewardClaim>(`/rewards/${id}/claim`, { method: "POST" }),
+  /** Demo accounts for judges and testers; empty unless the server runs with SEED_DEMO=1. */
+  demoAccounts: () => request<DemoAccount[]>("/auth/demo-accounts"),
   login: (email: string, password: string) =>
     request<Auth>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   me: () => request<User>("/me"),

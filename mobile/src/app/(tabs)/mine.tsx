@@ -5,12 +5,14 @@ import { useCallback, useEffect, useState } from "react";
 import Constants from "expo-constants";
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { AreaPicker } from "../../components/area";
+import { LanguagePicker } from "../../components/LanguagePicker";
 import { Button, Segmented, T } from "../../components/ui";
 import { api, type Badge, type CrewStats, type Fixer, type ReportDetail } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { subscribeDrafts, type Draft } from "../../lib/drafts";
 import { LANG_NAME, useI18n, type Lang, type TKey } from "../../lib/i18n";
 import { useStyles, useTheme, type Palette, type ThemeMode } from "../../lib/theme";
+import { showWelcome } from "../../lib/welcome";
 
 const BADGE_ICON: Record<string, string> = {
   first_report: "📸", reporter_5: "🖐️", mended: "🔧", confirmer: "🤝", accessibility: "♿", local_hero: "🏅",
@@ -25,8 +27,21 @@ export default function SettingsScreen() {
 /** Appearance and language switches, shared by both profiles. */
 function Settings() {
   const { mode, setMode } = useTheme();
-  const { t, lang, localLang, setLang } = useI18n();
+  const { t, tErr, lang, langs, setLang, mainLang, setMainLang } = useI18n();
+  const { user, updateUser } = useAuth();
   const s = useStyles(makeStyles);
+  // The main language is kept on the account, so it follows the person to a new phone.
+  const changeMain = async (l: Lang) => {
+    const before = mainLang;
+    setMainLang(l);
+    if (!user) return;
+    try {
+      updateUser(await api.setLanguage(l));
+    } catch (e) {
+      setMainLang(before);
+      Alert.alert("MendMap", tErr((e as Error).message));
+    }
+  };
   return (
     <>
       <T style={s.label}>{t("appearance")}</T>
@@ -39,20 +54,20 @@ function Settings() {
           { value: "dark", label: t("dark") },
         ]}
       />
-      {/* English plus the language of the country you're in, e.g. Shqip in Kosovo. */}
-      {localLang && (
+      {/* English, the language of the country you're in (e.g. Italiano in Italy) and your main language. */}
+      {langs.length > 1 && (
         <>
           <T style={s.label}>{t("language")}</T>
           <Segmented<Lang>
             value={lang}
             onChange={setLang}
-            options={[
-              { value: "en", label: LANG_NAME.en },
-              { value: localLang, label: (LANG_NAME[localLang] ?? localLang.toUpperCase()) },
-            ]}
+            options={langs.map((l) => ({ value: l, label: LANG_NAME[l] ?? l.toUpperCase() }))}
           />
         </>
       )}
+      <T style={s.label}>{t("mainLang")}</T>
+      <LanguagePicker value={mainLang} onChange={(l) => void changeMain(l)} />
+      <T style={[s.muted, { fontSize: 12 }]}>{t("mainLangHint")}</T>
     </>
   );
 }
@@ -237,7 +252,9 @@ function CitizenSettings() {
         />
         <Row icon="trail-sign" color={colors.fixed} label={t("stTitle")} onPress={() => router.push("/streets")} />
         <Row icon="briefcase" color={colors.blue} label={t("bkTitle")} onPress={() => router.push("/bookings")} />
-        <Row icon="leaf" color={colors.orange} label={t("cuTitle")} onPress={() => router.push("/cleanups")} last />
+        <Row icon="leaf" color={colors.orange} label={t("cuTitle")} onPress={() => router.push("/cleanups")} />
+        <Row icon="play-circle" color={colors.amber} label={t("wcHowToRow")}
+          onPress={showWelcome} last />
       </View>
 
       {/* Look and language */}
@@ -307,6 +324,7 @@ function CitizenSettings() {
         <T medium style={{ color: colors.danger, fontSize: 16 }}>{t("signOut")}</T>
       </Pressable>
       <T style={[s.muted, { textAlign: "center" }]}>MendMap {Constants.expoConfig?.version ?? ""}</T>
+      <T style={[s.muted, { textAlign: "center", fontSize: 12, marginTop: -4 }]}>{t("madeBy", { name: "Denis Ibrahimi" })}</T>
     </ScrollView>
   );
 }

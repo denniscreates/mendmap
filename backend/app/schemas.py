@@ -12,6 +12,7 @@ class Register(BaseModel):
     password: str = Field(min_length=6, max_length=128)
     neighbourhood: str | None = Field(default=None, max_length=60)
     code: str | None = Field(default=None, max_length=12)  # one-time code sent to the email
+    language: str | None = Field(default=None, max_length=8)  # main language, e.g. "sq"
 
 
 class OtpSend(BaseModel):
@@ -36,10 +37,15 @@ class SocialIn(BaseModel):
     email: str = Field(min_length=3, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     code: str = Field(min_length=4, max_length=12)
     neighbourhood: str | None = Field(default=None, max_length=60)
+    language: str | None = Field(default=None, max_length=8)  # main language, e.g. "sq"
 
 
 class NeighbourhoodIn(BaseModel):
     neighbourhood: str | None = Field(default=None, max_length=60)
+
+
+class LanguageIn(BaseModel):
+    language: str = Field(min_length=2, max_length=8)
 
 
 class Login(BaseModel):
@@ -56,6 +62,7 @@ class UserOut(BaseModel):
     home_lat: float | None = None
     home_lng: float | None = None
     neighbourhood: str | None = None
+    language: str | None = None          # main language
     mjeshter_status: str | None = None   # pending, approved, rejected; None = never applied
     mjeshter_skills: list[str] = []      # verified skills (only when approved)
 

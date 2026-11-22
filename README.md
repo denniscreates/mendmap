@@ -1,10 +1,102 @@
 # MendMap
 
-**Spot it. Snap it. Mended.**
+**Spot it. Snap it. Mended.** · Made by Denis Ibrahimi
 
-Citizens photograph street problems (potholes, broken streetlights, illegal dumping). Each report becomes a pin on a shared map. City staff move it from Reported → In progress → Fixed, and the citizen gets a push notification at each step.
+Residents photograph street problems (potholes, broken streetlights, illegal dumping, blocked ramps). Each report becomes a pin on a shared map. City staff move it from Reported → In progress → Fixed, and the resident gets a push notification at each step. Neighbours and skilled volunteers (*mjeshtrit*) can fix small jobs themselves and earn rewards from partner brands.
 
-### What's new for the trials
+---
+
+## Quick start (for judges)
+
+You need Python 3.11+ and Node.js 20+. Two terminals:
+
+**1. API and city dashboard**
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Set-Content .env "SEED_DEMO=1`nMENDMAP_DEMO_PAYMENTS=on"
+uvicorn app.main:app --env-file .env --reload --host 0.0.0.0 --port 8000
+```
+This uses a local SQLite file (`backend/mendmap.db`), so nothing else has to be installed. `SEED_DEMO=1` fills it with 19 real-looking reports in Prishtina and creates the demo accounts below. `MENDMAP_DEMO_PAYMENTS=on` lets you try paid bookings without a Stripe account.
+
+**2. The app**
+```powershell
+cd mobile
+npm install
+npx expo start
+```
+- **On a phone:** install *Expo Go* and scan the QR code. The phone must be on the same Wi-Fi as the computer.
+- **In a browser:** press `w` in the Expo terminal.
+- **City dashboard:** http://localhost:8000/admin · **Public page:** http://localhost:8000/city/ · **API docs:** http://localhost:8000/docs
+
+## Demo accounts
+
+While `SEED_DEMO=1` is on, the app's sign-in screen shows a **Demo accounts** box: tap one to sign in, no typing. The city dashboard has a **Demo: sign in as city admin** button. An account drops out of the list as soon as its password is changed, and the list is empty when `SEED_DEMO` is off.
+
+| Role | Email | Password | What to try |
+|---|---|---|---|
+| **City admin** | `admin@mendmap.local` | `admin123` | The city dashboard at `/admin`: change report status, accept fixes, verify mjeshtrit, rewards, bookings. In the app: the Jobs tab and every report. |
+| **Field crew** | `crew@mendmap.local` | `crew123` | Jobs tab: in-progress reports in route order on a map, *Mark fixed* with an after photo, works offline. |
+| **Resident** | `citizen@mendmap.local` | `citizen123` | Arta from Prishtina: report a problem, the map, *I see this too*, Fix & earn, badges, partner rewards. |
+| **Mjeshtër** | `arben@mendmap.local` | `mjeshter123` | Arben, a verified plumber and builder: takes skilled jobs and answers paid booking requests with a price. |
+
+More demo people: `driton@`, `blerina@` and `ilir@mendmap.local` (`citizen123`), and the mjeshtrit `blerta@` and `dritan@mendmap.local` (`mjeshter123`). You can also create your own account: in demo mode the 6-digit email code is shown on screen with a *Fill in* button.
+
+> These passwords are for the demo only. For real use set `SEED_DEMO=0`, a strong `ADMIN_PASSWORD` and a `JWT_SECRET` (see `backend/.env.example`).
+
+---
+
+## How to use the app
+
+**First launch**
+1. A short 3D intro plays (tap *Skip*).
+2. The welcome page plays our ad, then a **how-to video**. Close it with the **X**, or tick *Don't show this again*. Watch it again any time: Settings → *How MendMap works*.
+3. Sign in, or tap a demo account. New accounts pick their neighbourhood and their **main language**, so an Albanian travelling in Italy still gets the app in Albanian.
+
+**Residents**
+- **Map:** every report as a pin (orange = reported, amber = in progress, blue = fixed). Filter by category and status, and tap a pin for details.
+- **Report (camera tab):** take one or more photos. The AI suggests the category, severity and a description (you can edit all of it), and GPS places the pin. If someone already reported the same problem nearby, the app offers *I see this too* instead of a duplicate. With no signal the report is kept as a draft and sent later.
+- **Report detail:** photos, the AI check, city priority, the status timeline with city comments, and *Share*. You can edit your own reports.
+- **Fix & earn:** small, safe jobs (dumping, accessibility, …) a neighbour can fix. Tap *I'll fix it* and send an after photo; when the city accepts it you earn a badge. Badges buy rewards from partner brands (Settings → *Rewards*), given as a voucher code.
+- **Chat:** talk with your neighbourhood and the city.
+- **City:** fix rate, time to fix, reports near you and the neighbourhood leaderboard.
+- **Settings:** my reports, language and main language, light/dark mode, neighbourhood, near-you alerts, become a mjeshtër, sign out.
+
+**Mjeshtrit (skilled volunteers)**
+- Settings → *Mjeshtri*: add your skills, the days you're free and a photo or PDF of a diploma or certificate. The AI checks it: clear ones are approved at once, unclear ones go to the city.
+- Verified mjeshtrit can take *skilled jobs* (a broken bench, a blocked drain). Residents can also **book** a mjeshtër for a paid job: the mjeshtër sends a price, the resident pays, and the money is held until the resident taps *Job done*. Then the mjeshtër is paid, minus MendMap's 10% commission. If something goes wrong, the city decides.
+
+**Field crew**
+- **Jobs tab:** in-progress jobs, nearest first, with a route line and directions. *Mark fixed* needs an after photo. The list is cached, and closed jobs are sent once you're back online.
+
+## How to use the city dashboard (admin)
+
+Open http://localhost:8000/admin and sign in as the city admin (or tap the demo button).
+
+| Tab | What you do there |
+|---|---|
+| **Reports** | All reports, sorted by city priority (0–100, with reasons: severity, confirmations, waiting time, near a school or hospital). Filter and search. Click a row to see the photos, AI check, voice note and location; change the status with a comment (the resident gets a push); upload an after photo; re-run the AI check; or delete spam. |
+| **Map** | Every report on a map of Prishtina. |
+| **Statistics** | Totals per status and category, and the average days to fix. |
+| **Fixes & rewards** | Accept or reject neighbour fixes (after photos). Add, edit and hide partner rewards, and mark voucher codes as used. |
+| **Mjeshtri** | Applications the AI couldn't decide: open the document, then approve or reject. |
+| **Chat** | Answer residents and moderate the neighbourhood chats. |
+| **Bookings** | Paid jobs between residents and mjeshtrit. Disputes are decided here: pay the mjeshtër or refund the resident. |
+
+The ◐ button switches light and dark mode. *Public page ↗* opens the transparency page residents see.
+
+## Good to know
+- **AI** (photo check, descriptions, voice transcription, document check) needs `GEMINI_API_KEY` or `ANTHROPIC_API_KEY` in `backend/.env`. Without a key the app still works and skips the AI parts. Gemini's free plan has a daily limit; reports sent while it's used up are checked automatically later.
+- **Payments:** with `MENDMAP_DEMO_PAYMENTS=on` and no Stripe keys, paying just marks the booking paid. Real card payments need Stripe test keys (`STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`; see `backend/app/bookings.py`).
+- **Push notifications** need a development build, not Expo Go (see *Mobile app* below).
+
+---
+
+# Technical reference
+
+### Features
 | Feature | Where |
 |---|---|
 | **AI photo check:** suggests the category and severity, and blocks photos that don't show a street problem | Report screen (needs `ANTHROPIC_API_KEY`) |
@@ -50,7 +142,7 @@ uvicorn app.main:app --env-file .env --reload --host 0.0.0.0 --port 8000
 - API docs: http://localhost:8000/docs
 - City dashboard: http://localhost:8000/admin
 - Tables are created on first start. The categories (Pothole, Streetlight, Illegal dumping, Other) and the first admin account (`ADMIN_EMAIL` / `ADMIN_PASSWORD`) are seeded then too.
-- `SEED_DEMO=1` adds 16 demo reports in Prishtina, Kosovo (real neighbourhoods, Albanian and English descriptions, a photo on each, city comments) and four demo citizens. Sign in to the app as `citizen@mendmap.local` / `citizen123`.
+- `SEED_DEMO=1` adds 19 demo reports in Prishtina, Kosovo (real neighbourhoods, Albanian and English descriptions, a photo on each, city comments), partner rewards and the demo accounts (see *Demo accounts* above), and turns on the one-tap demo sign-in.
 - `python -m app.seed --reset-demo` replaces **all** reports with a fresh Prishtina set. Use it on demo databases only.
 - If `DATABASE_URL` is not set, the API uses a local `mendmap.db` SQLite file. That's handy for a first try.
 
@@ -84,7 +176,8 @@ This runs the whole lifecycle: register, report with photo, duplicate search, �
 | POST | `/auth/otp/send` | Sends a 6-digit sign-up code (demo mode returns it as `demo_code`) |
 | POST | `/auth/register`, `/auth/login` | Account (register needs the `code`), returns JWT |
 | POST | `/auth/social` | **Demo** Google/Apple sign-in: `{provider, name, email, code}` |
-| GET | `/me` · PUT `/me/push-token` | Current user · save Expo push token |
+| GET | `/auth/demo-accounts` | Demo accounts for the one-tap sign-in (empty unless `SEED_DEMO=1`) |
+| GET | `/me` · PUT `/me/push-token` · PUT `/me/language` | Current user · save Expo push token · main language |
 | GET | `/categories` | Report categories |
 | POST | `/reports` | Multipart: `category_id`, `latitude`, `longitude`, `description?`, `photo` (required, 400 without it) |
 | GET | `/reports?category=&status=&near=lat,lng&radius=` | Map pins; with `near`, sorted by distance (`distance_m`) |
@@ -119,6 +212,7 @@ For Google Maps in store builds, add `androidGoogleMapsApiKey` through the `reac
 
 ### Screens
 - **Intro:** the 3D animation (`assets/video/intro.mp4`) plays on every launch. Tap *Skip* to jump ahead. It fades into the app with Reanimated.
+- **Welcome page:** after the intro, the ad (`assets/video/ad.mp4`) and the how-to video (`assets/video/tutorial.mp4`) play with sound (muted with a *Sound on* button if the browser blocks sound). The X closes it; *Don't show this again* is remembered on the device.
 - **Map:** all reports as pins coloured by status (orange = reported, amber = in progress, blue = fixed), with category and status filters. Tap a pin for a preview card.
 - **Report:** take or pick a photo (required), choose a category, and GPS places a draggable pin. Add an optional note. Before sending, it checks for open reports of the same category within 40 m and offers *I see this too* instead of a duplicate. With no signal, the report is saved as an **offline draft** and sent automatically when you're back online.
 - **Settings (gear tab):** account card, a **My reports** button (opens the list), *Fix & earn*, appearance and language, your neighbourhood, near-you alerts, badges, and sign out (asks first).
@@ -147,7 +241,7 @@ mobile/src/
 ### Look and language
 - **Font:** Space Grotesk (the font in the intro), regular and medium only. There is no bold text.
 - **Light and dark mode:** follows the phone by default, or pick one under *My reports*. It's saved on the phone.
-- **Languages:** English plus the language of the country you're in. The country comes from GPS (reverse geocoding), falling back to the phone's region. Kosovo and Albania add Albanian (Shqip), Hungary adds Hungarian (Magyar). Anywhere else the app is English only. Switch on the sign-in screen or under *My reports*. Push notification text and the city dashboard stay in English.
+- **Languages:** English plus the language of the country you're in. The country comes from GPS (reverse geocoding), falling back to the phone's region. Kosovo and Albania add Albanian (Shqip), Hungary adds Hungarian (Magyar). Anywhere else the app is English only. Every account also has a **main language** (any language, picked at sign-up or in Settings and saved on the account) that is always offered, so an Albanian in Italy can keep the app in Albanian. Switch on the sign-in screen or in Settings. Push notification text and the city dashboard stay in English.
 
 ---
 

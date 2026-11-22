@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, loadToken, setToken, setUnauthorizedHandler, type User } from "./api";
+import { useI18n } from "./i18n";
 import { registerForPush } from "./push";
 
 const USER_KEY = "mendmap.user";
@@ -11,8 +12,8 @@ type AuthState = {
   user: User | null;
   ready: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (name: string, email: string, password: string, neighbourhood: string | null, code: string) => Promise<void>;
-  socialSignIn: (provider: Provider, name: string, email: string, neighbourhood: string | null, code: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string, neighbourhood: string | null, code: string, language: string | null) => Promise<void>;
+  socialSignIn: (provider: Provider, name: string, email: string, neighbourhood: string | null, code: string, language: string | null) => Promise<void>;
   signOut: () => Promise<void>;
   /** Replace the signed-in user after a profile change (e.g. home area). */
   updateUser: (u: User) => void;
@@ -23,6 +24,12 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
+  const { mainLang, setMainLang } = useI18n();
+
+  // The account's main language wins: sign in on a new phone and the app speaks your language.
+  useEffect(() => {
+    if (user?.language && user.language !== mainLang) setMainLang(user.language);
+  }, [user?.language]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const signOut = useCallback(async () => {
     api.setPushToken(null).catch(() => {});
@@ -58,8 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       ready,
       signIn: async (email, password) => finish(await api.login(email, password)),
-      signUp: async (name, email, password, area, code) => finish(await api.register(name, email, password, area, code)),
-      socialSignIn: async (provider, name, email, area, code) => finish(await api.social(provider, name, email, area, code)),
+      signUp: async (name, email, password, area, code, language) =>
+        finish(await api.register(name, email, password, area, code, language)),
+      socialSignIn: async (provider, name, email, area, code, language) =>
+        finish(await api.social(provider, name, email, area, code, language)),
       signOut,
       updateUser: (u) => {
         setUser(u);

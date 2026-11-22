@@ -7,7 +7,10 @@ so each string is only translated once for everyone.
 import asyncio
 import json
 import logging
+import os
 import re
+import time
+from datetime import date
 from pathlib import Path
 
 log = logging.getLogger("mendmap")
@@ -38,6 +41,12 @@ MAX_STRINGS = 1500
 MAX_LEN = 600
 BATCH = 120
 _locks: dict[str, asyncio.Lock] = {}
+# The endpoint is open (the sign-in screen is translated too), so the AI calls it can cause are capped:
+# the AI quota is shared with the photo checks, which matter more.
+DAILY_BATCHES = int(os.getenv("MENDMAP_TRANSLATE_BATCHES_PER_DAY", "30"))
+COOLDOWN_S = 600  # after a run where the AI didn't answer, wait before asking it again for that language
+_used: dict[str, int] = {}  # day -> AI batches sent
+_cooldown: dict[str, float] = {}  # lang -> time when the AI may be asked again
 
 PLACEHOLDER = re.compile(r"\{[a-zA-Z_]+\}")
 
@@ -134,7 +143,12 @@ async def translate(lang: str, strings: list[str]) -> tuple[dict[str, str], int]
     async with lock:  # one translation run per language at a time
         cache = _load(lang)
         missing = [s for s in strings if s not in cache]
-        if missing and ai.provider():
+        today = date.today().isoformat()
+        left = DAILY_BATCHES - _used.get(today, 0)
+        if missing and ai.provider() and left > 0 and time.monotonic() >= _cooldown.get(lang, 0):
+            chunks = [missing[i:i + BATCH] for i in range(0, len(missing), BATCH)][:left]
+            _used.clear()
+            _used[today] = DAILY_BATCHES - left + len(chunks)
             sem = asyncio.Semaphore(3)  # a few batches at once, without hitting rate limits
 
             async def run(chunk):
@@ -145,7 +159,9 @@ async def translate(lang: str, strings: list[str]) -> tuple[dict[str, str], int]
                         log.warning("Translation batch (%s) failed: %s", lang, exc)
                         return {}
 
-            results = await asyncio.gather(*(run(missing[i:i + BATCH]) for i in range(0, len(missing), BATCH)))
+            results = await asyncio.gather(*(run(c) for c in chunks))
+            if not any(results):
+                _cooldown[lang] = time.monotonic() + COOLDOWN_S
             for r in results:
                 cache.update(r)
             if any(results):

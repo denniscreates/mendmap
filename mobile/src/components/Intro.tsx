@@ -1,7 +1,7 @@
 import { useEventListener } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useCallback, useEffect, useRef } from "react";
-import { Pressable, StyleSheet } from "react-native";
+import { Pressable, StyleSheet, useWindowDimensions } from "react-native";
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withTiming } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useI18n } from "../lib/i18n";
@@ -20,6 +20,10 @@ export function Intro({ onDone }: { onDone: () => void }) {
   const finished = useRef(false);
   const opacity = useSharedValue(1);
   const skipOpacity = useSharedValue(0);
+  const { width, height } = useWindowDimensions();
+  // The video is portrait. On a wide screen (a PC) "cover" would show only a thin middle strip and cut off
+  // the logo, so there the whole video is shown, centred on the same navy as its background.
+  const fit = width > height ? "contain" : "cover";
 
   const player = useVideoPlayer(INTRO, (p) => {
     p.loop = false;
@@ -36,6 +40,14 @@ export function Intro({ onDone }: { onDone: () => void }) {
   }, [onDone, opacity]);
 
   useEventListener(player, "playToEnd", finish);
+  // On the web the play() above runs before the <video> element exists and is lost, so the intro
+  // stood still on its first frame. Start it again once the view is on screen and once it has loaded.
+  useEventListener(player, "statusChange", ({ status }) => {
+    if (status === "readyToPlay" && !finished.current && !player.playing) player.play();
+  });
+  useEffect(() => {
+    if (!player.playing) player.play();
+  }, [player]);
 
   useEffect(() => {
     skipOpacity.value = withDelay(1200, withTiming(1, { duration: 400 }));
@@ -48,7 +60,7 @@ export function Intro({ onDone }: { onDone: () => void }) {
 
   return (
     <Animated.View style={[StyleSheet.absoluteFill, styles.root, fade]}>
-      <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} />
+      <VideoView player={player} style={styles.video} contentFit={fit} nativeControls={false} />
       <Animated.View style={[styles.skipWrap, skipStyle]}>
         <Pressable onPress={finish} hitSlop={16} style={styles.skip} accessibilityRole="button" accessibilityLabel={t("skip")}>
           <T medium style={styles.skipText}>{t("skip")}</T>
@@ -60,6 +72,8 @@ export function Intro({ onDone }: { onDone: () => void }) {
 
 const styles = StyleSheet.create({
   root: { backgroundColor: "#070d1f", zIndex: 100 },
+  // width/height too: on the web a <video> keeps its own size (1080×1920) with only top/left/right/bottom.
+  video: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%" },
   skipWrap: { position: "absolute", right: 20, bottom: 48 },
   skip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, backgroundColor: "#ffffff22" },
   skipText: { color: "#fff" },

@@ -55,7 +55,19 @@ export async function addDraft(report: NewReport, categoryName: string) {
 }
 
 export async function removeDraft(localId: string) {
-  await save((await getDrafts()).filter((d) => d.localId !== localId));
+  const all = await getDrafts();
+  const gone = all.find((d) => d.localId === localId);
+  await save(all.filter((d) => d.localId !== localId));
+  // The copies made by persistFile: delete them, or every sent draft keeps its photos on the phone.
+  for (const uri of gone ? [gone.photoUri, ...(gone.morePhotos ?? []), gone.voiceUri] : []) {
+    if (!uri || !uri.includes("draft-")) continue;
+    try {
+      const f = new File(uri);
+      if (f.exists) f.delete();
+    } catch {
+      // already gone
+    }
+  }
 }
 
 /** Sends every draft; returns how many were sent. Stops at the first network error. */
@@ -65,16 +77,17 @@ export async function syncDrafts(): Promise<number> {
   let sent = 0;
   try {
     for (const d of await getDrafts()) {
+      let ok = true;
       try {
         await api.createReport(d);
       } catch (e) {
-        if (e instanceof ApiError && e.status === 0) break; // still offline
-        if (e instanceof ApiError && e.status === 401) break; // signed out, keep drafts
-        if (e instanceof ApiError && e.status >= 500) break; // server down, keep drafts
-        // Any other error (bad data) — drop it so it doesn't block the queue.
+        if (!(e instanceof ApiError)) break; // unknown problem: keep the drafts and try again later
+        // Still offline, signed out, too many requests, or the server is down: keep the drafts.
+        if (e.status === 0 || e.status === 401 || e.status === 408 || e.status === 429 || e.status >= 500) break;
+        ok = false; // the server refused this one (bad data): drop it so it doesn't block the queue
       }
       await removeDraft(d.localId);
-      sent++;
+      if (ok) sent++; // only count reports that really arrived
     }
   } finally {
     syncing = false;
