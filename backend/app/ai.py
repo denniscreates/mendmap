@@ -39,6 +39,11 @@ GEMINI_TOTAL_S = 25.0  # give up after this long in total
 CACHE_S = 3600  # the app checks the photo before sending, the server again after: answer once
 GEMINI_BUSY_SKIP_S = 300  # skip a model that was busy for 5 minutes
 CATEGORIES = ["pothole", "streetlight", "dumping", "accessibility", "other"]
+# Skills a mjeshtër (skilled volunteer) can have.
+SKILLS = ["plumbing", "electrics", "building", "painting", "carpentry", "gardening", "welding"]
+DOC_TYPES = ["vocational_diploma", "trade_certificate", "professional_licence", "training_certificate",
+             "employer_letter", "university_degree", "other_document", "not_a_document"]
+VERDICTS = ["legit", "suspicious", "fake", "not_a_document"]
 # What kind of picture it is. Only "real_photo" counts as evidence.
 PHOTO_KINDS = ["real_photo", "screenshot", "photo_of_screen", "drawing", "ai_generated", "stock_or_web", "edited"]
 
@@ -53,9 +58,25 @@ SCHEMA = {
         "safety_reason": {"type": "string"},
         "photo_kind": {"type": "string", "enum": PHOTO_KINDS},
         "kind_reason": {"type": "string"},
+        "description": {"type": "string"},
+        "skilled_ok": {"type": "boolean"},
+        "skill_needed": {"type": "string", "enum": SKILLS + ["none"]},
+        "blur_boxes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["face", "plate"]},
+                    "box": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["kind", "box"],
+                "additionalProperties": False,
+            },
+        },
     },
     "required": ["is_street_problem", "category", "severity", "reason", "neighbour_safe", "safety_reason",
-                 "photo_kind", "kind_reason"],
+                 "photo_kind", "kind_reason", "description", "blur_boxes",
+                 "skilled_ok", "skill_needed"],
     "additionalProperties": False,
 }
 # Gemini's JSON schema support: plain ranges instead of an integer enum.
@@ -70,9 +91,21 @@ GEMINI_SCHEMA = {
         "safety_reason": {"type": "string"},
         "photo_kind": {"type": "string", "enum": PHOTO_KINDS},
         "kind_reason": {"type": "string"},
+        "description": {"type": "string"},
+        "skilled_ok": {"type": "boolean"},
+        "skill_needed": {"type": "string", "enum": SKILLS + ["none"]},
+        "blur_boxes": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["face", "plate"]},
+                    "box": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["kind", "box"],
+            }},
     },
     "required": ["is_street_problem", "category", "severity", "reason", "neighbour_safe", "safety_reason",
-                 "photo_kind", "kind_reason"],
+                 "photo_kind", "kind_reason", "description", "blur_boxes",
+                 "skilled_ok", "skill_needed"],
 }
 
 # Before/after check of a neighbour's fix.
@@ -112,6 +145,19 @@ Decide:
 - safety_reason: one short sentence explaining the neighbour_safe answer, in English.
 - photo_kind: what kind of picture this is. real_photo = taken with a phone camera at the scene. screenshot = a screenshot of an app, map or website. photo_of_screen = a camera photo of a monitor or phone screen (moire, pixels, screen edges). drawing = illustration, cartoon, clip art or rendered graphic. ai_generated = an AI-made image (too smooth, warped text or objects, impossible details). stock_or_web = a professional stock or press photo, watermarks, or an image that looks taken from the internet. edited = a real photo that was clearly manipulated (pasted objects, heavy filters, added text). Be strict: citizens must send their own photo.
 - kind_reason: one short sentence explaining photo_kind, in English."""
+
+LANG_NAMES = {"en": "English", "sq": "Albanian", "hu": "Hungarian"}  # filled in from languages.LANGS below
+
+
+def photo_prompt(lang: str = "en") -> str:
+    """The photo check prompt, with the description written in the app user's language."""
+    language = LANG_NAMES.get(lang, "English")
+    return PROMPT + f"""
+- description: one or two short sentences describing the problem for the city, the way a citizen would write a report: what it is, roughly how big, and where in the picture (for example "A deep pothole about half a metre wide in the right lane, full of water."). Only what you can see; no guesses about causes. Write it in {language}. Empty string if it is not a street problem.
+- skilled_ok: true if this is NOT safe for an ordinary neighbour, but a skilled volunteer tradesperson with their own tools could safely fix it in a few hours: for example a broken bench or railing, a loose paving slab on the pavement, a broken playground swing, a blocked drain grate, peeling paint, a broken fence, a damaged ramp. False if it needs traffic control or work on the road itself, live mains electricity or streetlights, gas, work higher than 2 metres, heavy machinery, a permit, or if an ordinary neighbour could already do it (neighbour_safe true). When unsure, false.
+- skill_needed: the main skill a volunteer would need: plumbing, electrics, building (masonry, paving, concrete), painting, carpentry, gardening, welding; or none.
+- blur_boxes: every human face and every readable vehicle number plate in the photo, so MendMap can blur them before the photo is public. kind = face or plate. box = [ymin, xmin, ymax, xmax], each scaled 0 to 1000. Empty list if there are none."""
+
 
 TRANSCRIBE_PROMPT = """This is a voice note a citizen recorded while reporting a street problem in Prishtina, Kosovo.
 Transcribe exactly what is said, in the language it is spoken (usually Albanian or English). Do not translate.
@@ -166,24 +212,46 @@ def _clean(result: dict) -> dict:
     result["is_street_problem"] = bool(result.get("is_street_problem", True))
     if result.get("photo_kind") not in PHOTO_KINDS:
         result["photo_kind"] = "real_photo"
+    result["description"] = str(result.get("description") or "").strip()[:600]
+    result["blur_boxes"] = _boxes(result.get("blur_boxes"))
+    if result.get("skill_needed") not in SKILLS:
+        result["skill_needed"] = None
+    result["skilled_ok"] = (bool(result.get("skilled_ok", False)) and result["is_street_problem"]
+                            and result.get("photo_kind", "real_photo") in (None, "real_photo")
+                            and not result.get("neighbour_safe"))
     # Never safe for neighbours when it isn't a real photo of a street problem, or the model didn't say.
     result["neighbour_safe"] = (bool(result.get("neighbour_safe", False)) and result["is_street_problem"]
                                 and result["photo_kind"] == "real_photo")
     return {"available": True, **result}
 
 
+def _boxes(raw) -> list[dict]:
+    """Faces and number plates to blur, as [ymin, xmin, ymax, xmax] on a 0-1000 scale; bad boxes dropped."""
+    out = []
+    for b in raw if isinstance(raw, list) else []:
+        try:
+            kind = b.get("kind")
+            y0, x0, y1, x1 = (min(1000, max(0, int(v))) for v in b.get("box"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if kind in ("face", "plate") and y1 > y0 and x1 > x0:
+            out.append({"kind": kind, "box": [y0, x0, y1, x1]})
+    return out[:40]
+
+
 _cache: dict[str, tuple[float, dict]] = {}
 
 
-async def check_photo(data: bytes) -> dict:
+async def check_photo(data: bytes, lang: str = "en") -> dict:
     which = provider()
     if which is None:
         return {"available": False}
-    key = hashlib.sha256(data).hexdigest()
+    lang = lang if lang in LANG_NAMES else "en"
+    key = hashlib.sha256(data).hexdigest() + ":" + lang
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < CACHE_S:
         return dict(hit[1])
-    result = await _check(which, data)
+    result = await _check(which, data, photo_prompt(lang))
     if result.get("available"):
         if len(_cache) > 500:
             _cache.clear()
@@ -191,14 +259,14 @@ async def check_photo(data: bytes) -> dict:
     return result
 
 
-async def _check(which: str, data: bytes) -> dict:
+async def _check(which: str, data: bytes, prompt: str) -> dict:
     try:
         jpeg = _shrink(data)
     except Exception:
         return {"available": True, "is_street_problem": False, "reason": "This file isn't a photo."}
     if which == "gemini":
-        return await _check_gemini(jpeg)
-    return await _check_claude(jpeg)
+        return await _check_gemini(jpeg, prompt)
+    return await _check_claude(jpeg, prompt)
 
 
 # ---------- Gemini ----------
@@ -281,11 +349,11 @@ async def _gemini_generate(contents, config, what: str):
             task.cancel()
 
 
-async def _check_gemini(jpeg: bytes) -> dict:
+async def _check_gemini(jpeg: bytes, prompt: str) -> dict:
     from google.genai import types
 
     response = await _gemini_generate(
-        [types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), PROMPT],
+        [types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), prompt],
         types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=GEMINI_SCHEMA, temperature=0),
         "photo check",
     )
@@ -319,7 +387,7 @@ async def transcribe(audio: bytes, extension: str) -> str | None:
 
 # ---------- Claude ----------
 
-async def _check_claude(jpeg: bytes) -> dict:
+async def _check_claude(jpeg: bytes, prompt: str) -> dict:
     global _claude
     import anthropic
 
@@ -336,7 +404,7 @@ async def _check_claude(jpeg: bytes) -> dict:
                 "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                  "data": base64.standard_b64encode(jpeg).decode()}},
-                    {"type": "text", "text": PROMPT},
+                    {"type": "text", "text": prompt},
                 ],
             }],
         )
@@ -408,7 +476,7 @@ async def check_fix(before: bytes, after: bytes) -> dict:
     }
 
 
-async def _claude_json(images: list[bytes], prompt: str, schema: dict, what: str) -> str | None:
+async def _claude_json(images: list[bytes], prompt: str, schema: dict, what: str, pdf: bytes | None = None) -> str | None:
     global _claude
     import anthropic
 
@@ -425,6 +493,8 @@ async def _claude_json(images: list[bytes], prompt: str, schema: dict, what: str
                 "content": [
                     *({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                    "data": base64.standard_b64encode(img).decode()}} for img in images),
+                    *([{"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                                      "data": base64.standard_b64encode(pdf).decode()}}] if pdf else []),
                     {"type": "text", "text": prompt},
                 ],
             }],
@@ -435,3 +505,225 @@ async def _claude_json(images: list[bytes], prompt: str, schema: dict, what: str
     if response.stop_reason == "refusal":
         return None
     return next((b.text for b in response.content if b.type == "text"), None)
+
+
+# ---------- mjeshtër proof: is the skill document genuine? ----------
+PROOF_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_document": {"type": "boolean"},
+        "doc_type": {"type": "string", "enum": DOC_TYPES},
+        "name_on_doc": {"type": "string"},
+        "name_matches": {"type": "boolean"},
+        "issuer": {"type": "string"},
+        "skills_shown": {"type": "array", "items": {"type": "string", "enum": SKILLS}},
+        "looks_genuine": {"type": "boolean"},
+        "verdict": {"type": "string", "enum": VERDICTS},
+        "confidence": {"type": "integer"},
+        "reason": {"type": "string"},
+        "reason_user": {"type": "string"},
+    },
+    "required": ["is_document", "doc_type", "name_on_doc", "name_matches", "issuer", "skills_shown",
+                 "looks_genuine", "verdict", "confidence", "reason", "reason_user"],
+    "additionalProperties": False,
+}
+GEMINI_PROOF_SCHEMA = {k: v for k, v in PROOF_SCHEMA.items() if k != "additionalProperties"}
+PROOF_MIME = {"image/jpeg", "image/png", "image/webp", "image/heic", "application/pdf"}
+
+
+def proof_prompt(name: str, skills: list[str], lang: str = "en") -> str:
+    language = LANG_NAMES.get(lang, "English")
+    return f"""You verify proof documents for MendMap "mjeshtrit": skilled volunteers (tradespeople) who fix small things in public spaces in Prishtina, Kosovo, on days the city crews don't work.
+The applicant says their name is "{name}" and that they can do: {", ".join(skills)}.
+They uploaded a document to prove it, for example a vocational school diploma (shkollë profesionale), a trade or craft certificate, a professional licence (such as an electrician's licence), a training course certificate, or a letter from an employer. It may be in Albanian, Serbian, English or another language.
+
+Decide:
+- is_document: true if this is a photo or scan of a real document (paper certificate, diploma, licence card, letter). False for selfies, street photos, screenshots of chats, memes or blank pages.
+- doc_type: vocational_diploma, trade_certificate, professional_licence, training_certificate, employer_letter, university_degree, other_document, or not_a_document.
+- name_on_doc: the person's name as written on it, or "" if there is none.
+- name_matches: true if name_on_doc is clearly the same person as "{name}" (ignore accents such as ë/e and ç/c, the order of the names and middle names).
+- issuer: who issued it (school, company, institution), or "".
+- skills_shown: which of these skills the document really shows the person has: plumbing, electrics, building, painting, carpentry, gardening, welding. Only skills the document supports.
+- looks_genuine: false if there are signs of forgery: edited or pasted text, mismatched fonts, a name that looks typed over, missing stamps or signatures where an official document has them, a template or sample ("SPECIMEN", "SAMPLE", "Lorem ipsum", "Emri Mbiemri"), an AI-generated or drawn image, or a screenshot of a website or a document found online.
+- verdict: legit = a genuine document showing this person has at least one of the claimed skills. suspicious = it could be genuine but something doesn't fit (the name doesn't match, it's hard to read, the skills are unclear, an unusual issuer). fake = clear signs of forgery, a template, or an AI-made or drawn document. not_a_document = not a document at all.
+- confidence: 0 to 100, how sure you are of the verdict.
+- reason: one short sentence for the city official, in English.
+- reason_user: the same in {language}, kind and clear, for the applicant.
+Be strict: this person will work in public spaces with the city's trust. When unsure, choose suspicious, never legit. Never repeat personal ID numbers."""
+
+
+def _clean_proof(r: dict) -> dict:
+    verdict = r.get("verdict") if r.get("verdict") in VERDICTS else "suspicious"
+    try:
+        conf = min(100, max(0, int(r.get("confidence") or 0)))
+    except (TypeError, ValueError):
+        conf = 0
+    shown = [x for x in (r.get("skills_shown") or []) if x in SKILLS]
+    return {
+        "available": True,
+        "is_document": bool(r.get("is_document")),
+        "doc_type": r.get("doc_type") if r.get("doc_type") in DOC_TYPES else "other_document",
+        "name_on_doc": str(r.get("name_on_doc") or "")[:160],
+        "name_matches": bool(r.get("name_matches")),
+        "issuer": str(r.get("issuer") or "")[:200],
+        "skills_shown": shown,
+        "looks_genuine": bool(r.get("looks_genuine")),
+        "verdict": verdict,
+        "confidence": conf,
+        "reason": str(r.get("reason") or "")[:500],
+        "reason_user": str(r.get("reason_user") or r.get("reason") or "")[:500],
+    }
+
+
+async def check_proof(data: bytes, mime: str, name: str, skills: list[str], lang: str = "en") -> dict:
+    """Reads a skill document (photo or PDF) and judges whether it's genuine and proves the skills."""
+    which = provider()
+    if which is None:
+        return {"available": False}
+    prompt = proof_prompt(name, skills, lang)
+    pdf = data if mime == "application/pdf" else None
+    if pdf is None:
+        try:
+            data, mime = _shrink(data), "image/jpeg"
+        except Exception:
+            return _clean_proof({"verdict": "not_a_document", "confidence": 100, "doc_type": "not_a_document",
+                                 "reason": "The file isn't a photo or a PDF.", "reason_user": "The file isn't a photo or a PDF."})
+    text = None
+    if which == "gemini":
+        from google.genai import types
+        response = await _gemini_generate(
+            [types.Part.from_bytes(data=data, mime_type=mime), prompt],
+            types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=GEMINI_PROOF_SCHEMA,
+                                        temperature=0),
+            "proof check",
+        )
+        text = response.text if response is not None else None
+    else:
+        text = await _claude_json([] if pdf else [data], prompt, PROOF_SCHEMA, "proof check", pdf=pdf)
+    if not text:
+        return {"available": False}
+    try:
+        return _clean_proof(json.loads(text))
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        log.warning("Proof check returned invalid JSON")
+        return {"available": False}
+
+
+# ---------- community chat: keep it friendly ----------
+CHAT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "reason": {"type": "string"},
+    },
+    "required": ["ok", "reason"],
+    "additionalProperties": False,
+}
+GEMINI_CHAT_SCHEMA = {k: v for k, v in CHAT_SCHEMA.items() if k != "additionalProperties"}
+CHAT_TIMEOUT_S = 8.0  # people are waiting to see their message
+
+
+def chat_prompt(text: str, lang: str = "en") -> str:
+    return f"""You moderate the community chat of MendMap, a city app where neighbours in Prishtina, Kosovo talk about street problems (potholes, lights, rubbish), fixing them together and their neighbourhood.
+The message can be in any language.
+
+Block it (ok=false) only if it contains: insults or harassment of a person, hate or threats, sexual content, spam or advertising, scams, or someone's private data (phone number, home address, ID numbers).
+Allow (ok=true) everything else, including complaints about the city, strong opinions, slang, jokes and off-topic small talk.
+
+reason: if blocked, one short friendly sentence in {LANG_NAMES.get(lang, "English")} telling the sender why. If allowed, "".
+
+Message: {json.dumps(text, ensure_ascii=False)}"""
+
+
+async def moderate_chat(text: str, lang: str = "en") -> dict:
+    """{"ok": True/False, "reason": str}; ok is None when no AI answered (the message is then allowed,
+    and neighbours can still report it)."""
+    which = provider()
+    if not which:
+        return {"ok": None, "reason": ""}
+    prompt = chat_prompt(text, lang)
+    try:
+        if which == "gemini":
+            from google.genai import types
+
+            response = await asyncio.wait_for(_gemini_generate(
+                [prompt],
+                types.GenerateContentConfig(response_mime_type="application/json",
+                                            response_json_schema=GEMINI_CHAT_SCHEMA, temperature=0),
+                "chat moderation",
+            ), CHAT_TIMEOUT_S)
+            raw = response.text if response is not None else None
+        else:
+            raw = await asyncio.wait_for(_claude_json([], prompt, CHAT_SCHEMA, "chat moderation"), CHAT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        log.warning("Chat moderation timed out")
+        return {"ok": None, "reason": ""}
+    try:
+        r = json.loads(raw or "")
+        return {"ok": bool(r["ok"]), "reason": str(r.get("reason") or "")[:300]}
+    except (ValueError, KeyError, TypeError):
+        return {"ok": None, "reason": ""}
+
+
+# ---------- small text jobs: translate a chat message, write the city's weekly summary ----------
+TEXT_SCHEMA = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
+    "additionalProperties": False,
+}
+
+
+async def _text_job(prompt: str, what: str, timeout: float = 20.0) -> str | None:
+    """One prompt -> one text, with Gemini (hedged) or Claude. None when no AI answered."""
+    which = provider()
+    if not which:
+        return None
+    try:
+        if which == "gemini":
+            from google.genai import types
+
+            response = await asyncio.wait_for(_gemini_generate(
+                [prompt],
+                types.GenerateContentConfig(response_mime_type="application/json",
+                                            response_json_schema={k: v for k, v in TEXT_SCHEMA.items() if k != "additionalProperties"},
+                                            temperature=0.2),
+                what,
+            ), timeout)
+            raw = response.text if response is not None else None
+        else:
+            raw = await asyncio.wait_for(_claude_json([], prompt, TEXT_SCHEMA, what), timeout)
+        out = str(json.loads(raw or "")["text"]).strip()
+        return out or None
+    except (asyncio.TimeoutError, ValueError, KeyError, TypeError):
+        return None
+
+
+async def translate_text(text: str, lang: str) -> str | None:
+    language = LANG_NAMES.get(lang, "English")
+    return await _text_job(
+        f"Translate this message from a neighbourhood chat in Prishtina, Kosovo into {language}. "
+        f"Keep names, street names, emoji and the casual tone. If it is already in {language}, return it unchanged.\n\n"
+        f"Message: {json.dumps(text, ensure_ascii=False)}",
+        "chat translation", timeout=12.0,
+    )
+
+
+async def city_summary(facts: dict, lang: str = "en") -> str | None:
+    language = LANG_NAMES.get(lang, "English")
+    return await _text_job(
+        f"You write the weekly summary for the city team of Prishtina, Kosovo from MendMap data (citizens report street problems).\n"
+        f"Write 4 to 6 short sentences in {language}: what happened, where it is worst (areas and streets), what waits too long, "
+        f"repairs that did not hold, and one concrete suggestion for next week. Plain text, no lists, no headings, numbers as digits.\n\n"
+        f"Data (JSON): {json.dumps(facts, ensure_ascii=False, default=str)}",
+        "city summary", timeout=30.0,
+    )
+
+
+def _all_languages() -> None:
+    """Descriptions and proof-check reasons can be written in any language the app offers."""
+    from .languages import LANGS
+    LANG_NAMES.update(LANGS)
+
+
+_all_languages()

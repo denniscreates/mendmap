@@ -73,6 +73,14 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="chat"
+        options={{
+          title: t("tabChat"),
+          headerTitle: t("chatTitle"),
+          tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles" color={color as string} size={size} />,
+        }}
+      />
+      <Tabs.Screen
         name="city"
         options={{
           title: t("tabCity"),

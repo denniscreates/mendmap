@@ -21,3 +21,6 @@ web-build/
 Thumbs.db
 .vscode/
 .idea/
+
+# Mjeshtër proof documents (private, personal data)
+backend/private/

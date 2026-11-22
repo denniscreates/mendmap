@@ -1,25 +1,139 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Localization from "expo-localization";
 import * as Location from "expo-location";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AppState } from "react-native";
+
+import { API_URL } from "./api";
 
 /**
- * Two languages at a time: English plus the language of the country the user is in.
+ * Two languages at a time: English plus the official language of the country the user is in.
  * The country comes from GPS (reverse geocoding) and falls back to the phone's region.
- * Example: in Kosovo (XK) the app offers English and Albanian (Shqip).
+ * Examples: Kosovo → English + Shqip, Netherlands → English + Nederlands, Italy → English + Italiano.
+ * Albanian and Hungarian are translated by hand below; every other language is translated by the
+ * AI on the server once, then cached on the server and on the phone (works offline after that).
  */
-export type Lang = "en" | "sq" | "hu";
+export type Lang = string;
 
-const COUNTRY_LANG: Record<string, Exclude<Lang, "en">> = {
-  XK: "sq", // Kosovo
-  AL: "sq", // Albania
-  HU: "hu", // Hungary
+/** Every country (ISO 3166) → its official language other than English (the first or most used one).
+ * Countries whose only official language is English (UK, USA, Australia…) map to nothing: English only. */
+const COUNTRY_LANG: Record<string, string> = {
+  XK: "sq", AL: "sq", HU: "hu", NL: "nl", BE: "nl", IT: "it", SM: "it", VA: "it", DE: "de", AT: "de",
+  CH: "de", LI: "de", FR: "fr", MC: "fr", LU: "lb", ES: "es", PT: "pt", PL: "pl", CZ: "cs", SK: "sk",
+  SI: "sl", HR: "hr", BA: "bs", RS: "sr", ME: "sr", MK: "mk", BG: "bg", RO: "ro", MD: "ro", GR: "el",
+  CY: "el", TR: "tr", DK: "da", SE: "sv", NO: "nb", FI: "fi", AX: "sv", IS: "is", EE: "et", LV: "lv",
+  LT: "lt", MT: "mt", AD: "ca", IE: "ga", FO: "fo", GL: "kl", UA: "uk", RU: "ru", BY: "be", GE: "ka",
+  AM: "hy", AZ: "az", KZ: "kk", UZ: "uz", KG: "ky", TJ: "tg", TM: "tk", MN: "mn", SA: "ar", AE: "ar",
+  QA: "ar", KW: "ar", BH: "ar", OM: "ar", YE: "ar", JO: "ar", LB: "ar", SY: "ar", IQ: "ar", PS: "ar",
+  EG: "ar", LY: "ar", TN: "ar", DZ: "ar", MA: "ar", EH: "ar", MR: "ar", SD: "ar", IL: "he", IR: "fa",
+  AF: "ps", PK: "ur", IN: "hi", BD: "bn", NP: "ne", LK: "si", MV: "dv", BT: "dz", CN: "zh", TW: "zh",
+  HK: "zh", MO: "zh", SG: "zh", JP: "ja", KR: "ko", KP: "ko", TH: "th", VN: "vi", LA: "lo", KH: "km",
+  MM: "my", ID: "id", MY: "ms", BN: "ms", PH: "tl", TL: "tet", KE: "sw", TZ: "sw", UG: "sw", ET: "am",
+  ER: "ti", SO: "so", DJ: "fr", RW: "rw", BI: "rn", MG: "mg", ZA: "af", NA: "af", LS: "st", BW: "tn",
+  SZ: "ss", MW: "ny", ZW: "sn", SN: "fr", CI: "fr", ML: "fr", BF: "fr", NE: "fr", TD: "fr", CM: "fr",
+  CF: "fr", CG: "fr", CD: "fr", GA: "fr", GN: "fr", BJ: "fr", TG: "fr", KM: "fr", SC: "fr", MU: "fr",
+  RE: "fr", YT: "fr", AO: "pt", MZ: "pt", CV: "pt", GW: "pt", ST: "pt", GQ: "es", CA: "fr", MX: "es",
+  GT: "es", HN: "es", SV: "es", NI: "es", CR: "es", PA: "es", CU: "es", DO: "es", PR: "es", CO: "es",
+  VE: "es", EC: "es", PE: "es", BO: "es", CL: "es", AR: "es", UY: "es", PY: "gn", BR: "pt", SR: "nl",
+  AW: "nl", CW: "nl", SX: "nl", BQ: "nl", HT: "ht", GF: "fr", GP: "fr", MQ: "fr", BL: "fr", MF: "fr",
+  PM: "fr", NZ: "mi", WS: "sm", AS: "sm", TO: "to", FJ: "fj", VU: "bi", MH: "mh", NR: "na", KI: "gil",
+  TV: "tvl", PW: "pau", PF: "fr", NC: "fr", WF: "fr",
 };
 
-export const LANG_NAME: Record<Lang, string> = { en: "English", sq: "Shqip", hu: "Magyar" };
-const DATE_LOCALE: Record<Lang, string> = { en: "en-GB", sq: "sq", hu: "hu" };
+/** Each language's name in that language. */
+export const LANG_NAME: Record<string, string> = {
+  en: "English",
+  sq: "Shqip", hu: "Magyar", nl: "Nederlands", it: "Italiano", de: "Deutsch", fr: "Français",
+  es: "Español", pt: "Português", pl: "Polski", cs: "Čeština", sk: "Slovenčina", sl: "Slovenščina",
+  hr: "Hrvatski", bs: "Bosanski", sr: "Српски", mk: "Македонски", bg: "Български", ro: "Română",
+  el: "Ελληνικά", tr: "Türkçe", da: "Dansk", sv: "Svenska", nb: "Norsk", fi: "Suomi",
+  is: "Íslenska", et: "Eesti", lv: "Latviešu", lt: "Lietuvių", mt: "Malti", ca: "Català",
+  ga: "Gaeilge", lb: "Lëtzebuergesch", fo: "Føroyskt", kl: "Kalaallisut", uk: "Українська", ru: "Русский",
+  be: "Беларуская", ka: "ქართული", hy: "Հայերեն", az: "Azərbaycan", kk: "Қазақ", uz: "Oʻzbek",
+  ky: "Кыргызча", tg: "Тоҷикӣ", tk: "Türkmen", mn: "Монгол", ar: "العربية", he: "עברית",
+  fa: "فارسی", ps: "پښتو", ur: "اردو", hi: "हिन्दी", bn: "বাংলা", ne: "नेपाली",
+  si: "සිංහල", dv: "ދިވެހި", dz: "རྫོང་ཁ", zh: "中文", ja: "日本語", ko: "한국어",
+  th: "ไทย", vi: "Tiếng Việt", lo: "ລາວ", km: "ខ្មែរ", my: "မြန်မာ", id: "Bahasa Indonesia",
+  ms: "Bahasa Melayu", tl: "Filipino", tet: "Tetun", sw: "Kiswahili", am: "አማርኛ", ti: "ትግርኛ",
+  so: "Soomaali", rw: "Kinyarwanda", rn: "Ikirundi", mg: "Malagasy", af: "Afrikaans", st: "Sesotho",
+  tn: "Setswana", ss: "SiSwati", ny: "Chichewa", sn: "chiShona", ht: "Kreyòl ayisyen", gn: "Avañe'ẽ",
+  sm: "Gagana Samoa", to: "Lea faka-Tonga", fj: "Vosa Vakaviti", bi: "Bislama", mi: "Te Reo Māori", mh: "Kajin M̧ajeļ",
+  na: "Dorerin Naoero", gil: "Taetae ni Kiribati", tvl: "Te Ggana Tuuvalu", pau: "Tekoi er a Belau",
+};
+const dateLocale = (l: Lang) => (l === "en" ? "en-GB" : l);
 
 const en = {
+  cuTitle: "Clean-up days",
+  cuIntro: "Get together with your neighbours to clean a street or a park. Everyone who comes earns a badge.",
+  cuNew: "Organise a clean-up day",
+  cuNone: "No clean-up days planned yet. Be the first!",
+  cuGoing: "{n} going",
+  cuImGoing: "I'm coming",
+  cuYoureGoing: "You're going ✓",
+  cuNotGoing: "I can't come anymore",
+  cuWhat: "What will you clean?",
+  cuWhatPh: "e.g. Clean the park by the school",
+  cuWhere: "Where do you meet?",
+  cuWhen: "When?",
+  cuRoom: "For which neighbourhood?",
+  cuDetails: "Details (optional): what to bring, how long",
+  cuCreate: "Invite the neighbours",
+  cuOrganiser: "Organised by {name}",
+  cuWhoCame: "Who came?",
+  cuWhoCameHint: "Tick everyone who came. Each of them earns a badge.",
+  cuSaveAttendance: "Save and give badges",
+  cuSaved: "Thanks! The badges are given.",
+  cuCancel: "Cancel the clean-up day",
+  cuCancelAsk: "Cancel it? Everyone going gets a notification.",
+  cuCancelled: "Cancelled",
+  cuDone: "Done ✓",
+  cuPast: "Past clean-up days",
+  cuToday: "Today",
+  cuTomorrow: "Tomorrow",
+  cuOpen: "See clean-up day",
+  cuPeople: "Who's coming",
+  stTitle: "My streets",
+  stIntro: "Adopt a street you care about. You get a notification for every new problem on it, and your name shows on its reports.",
+  stAdd: "Adopt this street",
+  stSponsor: "As a school or business (optional)",
+  stOpen: "{n} open problems",
+  stAllGood: "No open problems 🎉",
+  stNone: "You don't look after any street yet.",
+  stRemove: "Stop looking after it",
+  stAdopted: "Looked after by {names}",
+  chatTranslate: "See translation",
+  chatOriginal: "See original",
+  chatAnnouncement: "City announcement",
+  cameBack: "Came back after a fix",
+  top10Title: "Top 10 this month",
+  top10Intro: "Vote with “I see this too”. The city sees this list.",
+  top10None: "No votes yet this month.",
+  speedTitle: "How fast each area gets fixed",
+  speedRow: "{d} days on average · {w}% within a week",
+  speedNone: "Nothing fixed yet",
+  cameBackN: "↺ {n} came back",
+  streetPlaceholder: "Street or place, e.g. Agim Ramadani",
+  streetNone: "No street found. Move the map instead.",
+  // community chat
+  tabChat: "Chat",
+  chatTitle: "Community chat",
+  chatIntro: "Talk with your neighbours about your streets and fix things together. The AI keeps it friendly.",
+  chatCity: "Whole city",
+  chatYourArea: "Your neighbourhood",
+  chatAreas: "Neighbourhoods",
+  chatToday: "{n} today",
+  chatNoMessages: "No messages yet",
+  chatEmpty: "No messages yet. Say hello to your neighbours!",
+  chatPlaceholder: "Write a message…",
+  chatEarlier: "Load earlier messages",
+  chatReport: "Report message",
+  chatReported: "Thanks. The message is hidden once enough neighbours report it.",
+  chatDelete: "Delete message",
+  chatBadgeCity: "City",
+  chatBadgeMj: "Mjeshtër",
+  chatShare: "Share in chat",
+  chatAttached: "Report attached",
+  chatRules: "Be kind. No insults, ads or phone numbers.",
   tagline: "Spot it. Snap it. Mended.",
   skip: "Skip",
   // login
@@ -66,7 +180,7 @@ const en = {
   step2: "2 · What's the problem?",
   step3: "3 · Where?",
   useMyLocation: "Use my location",
-  dragHint: "Drag the pin to the exact spot.",
+  dragHint: "Type the street, or move the map so the pin is on the exact spot.",
   locPermOff: "Location permission is off. Drag the pin to the problem instead.",
   gpsFail: "Couldn't get GPS. Drag the pin to the problem.",
   step4: "4 · Add a note (optional)",
@@ -195,6 +309,99 @@ const en = {
   whereLiveHint: "Pick your neighbourhood. You can take small jobs there and earn fixer badges.",
   elsewhere: "Somewhere else",
   errArea: "Please pick your neighbourhood",
+  mjTitle: "Mjeshtri",
+  mjIntro: "Skilled volunteers who fix things in the neighbourhood when the city doesn't work, like on Sundays.",
+  mjBecome: "Become a mjeshtër",
+  mjBecomeBody: "Plumber, painter, builder, welder…? Show proof of your skill and help your neighbourhood. You earn badges and partner rewards.",
+  mjSignUp: "Sign up with proof",
+  mjYouAre: "You're a verified mjeshtër",
+  mjVerifiedAi: "Your document was checked and approved by the AI.",
+  mjVerifiedCity: "Approved by the city.",
+  mjVerifiedShort: "Verified",
+  mjPendingShort: "Being checked",
+  mjSeeJobs: "See jobs you can take",
+  mjPending: "Your document is being checked",
+  mjPendingBody: "A city official will look at it soon. You'll get a notification.",
+  mjRejected: "We couldn't verify your skill",
+  mjTryAgain: "Send another document",
+  mjFreeSunday: "Free on Sunday",
+  mjNone: "No mjeshtër matches yet.",
+  mjJobsDone: "{n} jobs done",
+  mjApplyIntro: "A mjeshtër takes skilled jobs the AI says are too much for an ordinary neighbour, like a broken bench, a loose railing or a blocked drain. It's volunteer work for public spaces.",
+  mjSkills: "What can you do?",
+  mjSafetyNote: "Live electricity, gas, roads and work at heights always stay with the city crew.",
+  mjDays: "When are you free?",
+  mjBio: "A few words about you",
+  mjBioHint: "e.g. Plumber for 15 years, free most Sundays",
+  mjProof: "Proof of your skill",
+  mjProofHint: "A diploma from a vocational school, a trade certificate, a licence or a letter from your employer. Don't send your ID card.",
+  mjProofPhoto: "Take a photo",
+  mjProofFile: "Choose a file",
+  mjFromPhotos: "From photos",
+  mjPrivacy: "Only the AI check and city staff see your document. It is never public.",
+  mjChecking: "The AI is reading your document…",
+  mjSend: "Send for checking",
+  mjNeed: "Pick at least one skill and add your proof.",
+  mjDoneOk: "You're a mjeshtër! ✓",
+  mjDoneOkBody: "The AI verified your document. You can now take skilled jobs: {skills}.",
+  mjDoneBad: "Document not accepted",
+  mjDoneBadBody: "The AI couldn't verify this document. Try a clearer photo or another document.",
+  mjCardBody: "Skilled volunteers for Sundays and holidays. Find one or become one.",
+  mjCardVerified: "You're verified. Skilled jobs show up in your list.",
+  mjJobTitle: "This needs a mjeshtër: {skill}",
+  mjJobBody: "Too much for an ordinary neighbour, but a skilled volunteer can fix it, even on a Sunday.",
+  mjAsk: "Ask a mjeshtër",
+  mjAreYou: "Are you a mjeshtër? Sign up",
+  mjAskedTitle: "Asked! 🔧",
+  mjAsked: "{n} mjeshtër(s) with the right skill got a notification.",
+  mjAskedNone: "No mjeshtër with this skill yet. We'll keep the job open.",
+  skill_plumbing: "Plumbing",
+  skill_electrics: "Electrics",
+  skill_building: "Building",
+  skill_painting: "Painting",
+  skill_carpentry: "Carpentry",
+  skill_gardening: "Gardening",
+  skill_welding: "Welding",
+  skill_any: "a skilled hand",
+  day_weekday_evenings: "Weekday evenings",
+  day_saturday: "Saturday",
+  day_sunday: "Sunday",
+  day_holidays: "Holidays",
+  aiWroteNote: "The AI wrote this from your photo. Change it if you like.",
+  aiWroteDesc: "Description written by AI from the photo",
+  aiWillBlur: "{n} face(s) or number plate(s) will be blurred for privacy",
+  clear: "Clear",
+  blurredN: "{n} blurred for privacy",
+  reopenedN: "Reopened {n}×",
+  rateTitle: "Is it really fixed?",
+  rateBody: "You reported this. Tell the city if the fix is good.",
+  rateYes: "Yes, fixed",
+  rateNo: "Not fixed",
+  rateBadTitle: "Not fixed?",
+  rateBadBody: "The report goes back on the map and the city is told the fix didn't work.",
+  rateBadYes: "Reopen it",
+  rateThanksOk: "Thanks for confirming the fix!",
+  rateThanksBad: "It's back on the map. The city will look at it again.",
+  ratedOk: "The reporter confirmed the fix",
+  ratedOkMine: "You confirmed the fix",
+  rewardsTitle: "Rewards",
+  rewardsBalance: "{n} badges to spend",
+  rewardsIntro: "Local partners thank fixers. Spend badges on a reward and show the code at the partner.",
+  rewardGet: "Get it",
+  rewardNeed: "{n} more badges",
+  rewardCost: "{n} badges",
+  rewardLeft: "{n} left",
+  rewardConfirmTitle: "Get this reward?",
+  rewardConfirmBody: "{title} from {partner} for {n} badges.",
+  rewardGotTitle: "Your voucher 🎉",
+  rewardGotBody: "Show the code {code} at {partner}. You'll find it under Rewards.",
+  rewardNone: "No rewards on offer right now. Check back soon.",
+  myVouchers: "My vouchers",
+  voucherUsed: "Used",
+  voucherReady: "Ready to use",
+  nextRewardProgress: "{n}/{cost} badges to {title} at {partner}",
+  rewardReady: "You can get {title} at {partner}!",
+  seeRewards: "See partner rewards",
   kind_real_photo: "real photo",
   kind_screenshot: "screenshot",
   kind_photo_of_screen: "photo of a screen",
@@ -240,7 +447,6 @@ const en = {
   nextLevel: "{n} more badges to the next level",
   topLevel: "Top level. Thank you!",
   badgesShort: "badges",
-  rewardOwed: "{e} reward on its way",
   setAreaTitle: "Where do you live?",
   setAreaBody: "Optional: pick your neighbourhood to see jobs near home first and get an alert when a new one appears.",
   setArea: "Set area",
@@ -255,7 +461,7 @@ const en = {
   how1: "Take any job the AI marks safe, in any neighbourhood: litter, dumping, blocked paths.",
   how2: "Fix it within {h} hours, or it goes back to the map for someone else.",
   how3: "Send an after photo. The city checks it and you earn a fixer badge.",
-  how4: "Every {goal} badges earn €{eur}.",
+  how4: "Spend badges on rewards from partners, like a free dinner for 2.",
   topFixers: "Top neighbour fixers",
   canFixTitle: "You can fix this",
   earnBadge: "It's in your neighbourhood. Fix it, send an after photo and earn a badge.",
@@ -300,10 +506,7 @@ const en = {
   fixVerified: "Fixed by a neighbour ✓",
   fixerTitle: "Neighbour fixer",
   fixerBadges: "{n} fixer badges",
-  fixerProgress: "{n}/{goal} to your next €{eur} reward",
   fixerPending: "{n} waiting for the city's check",
-  fixerEarned: "Rewards earned: {e} · paid: {p}",
-  fixerRewardNote: "Every 20 accepted fixes earns €10, paid to you by the city.",
   canFixHere: "Jobs you can fix in {area}",
   canFixEmpty: "No open jobs you can fix in {area} right now.",
   fixSent: "Thanks! The city will check your photo. Once accepted it becomes a fixer badge.",
@@ -314,6 +517,77 @@ const en = {
 type Dict = typeof en;
 
 const sq: Dict = {
+  cuTitle: "Ditët e pastrimit",
+  cuIntro: "Bashkohu me fqinjët për të pastruar një rrugë ose park. Kushdo që vjen fiton një distinktiv.",
+  cuNew: "Organizo një ditë pastrimi",
+  cuNone: "Ende s'ka ditë pastrimi të planifikuara. Bëhu i pari!",
+  cuGoing: "{n} vijnë",
+  cuImGoing: "Po vij",
+  cuYoureGoing: "Ti vjen ✓",
+  cuNotGoing: "Nuk mund të vij më",
+  cuWhat: "Çfarë do të pastroni?",
+  cuWhatPh: "p.sh. Pastrojmë parkun pranë shkollës",
+  cuWhere: "Ku takoheni?",
+  cuWhen: "Kur?",
+  cuRoom: "Për cilën lagje?",
+  cuDetails: "Detaje (opsionale): çfarë të sillni, sa zgjat",
+  cuCreate: "Fto fqinjët",
+  cuOrganiser: "Organizuar nga {name}",
+  cuWhoCame: "Kush erdhi?",
+  cuWhoCameHint: "Shëno të gjithë që erdhën. Secili fiton një distinktiv.",
+  cuSaveAttendance: "Ruaj dhe jep distinktivët",
+  cuSaved: "Faleminderit! Distinktivët u dhanë.",
+  cuCancel: "Anulo ditën e pastrimit",
+  cuCancelAsk: "Ta anulosh? Të gjithë që vijnë marrin njoftim.",
+  cuCancelled: "Anuluar",
+  cuDone: "Përfunduar ✓",
+  cuPast: "Ditët e kaluara",
+  cuToday: "Sot",
+  cuTomorrow: "Nesër",
+  cuOpen: "Shih ditën e pastrimit",
+  cuPeople: "Kush vjen",
+  stTitle: "Rrugët e mia",
+  stIntro: "Adopto një rrugë që të intereson. Merr njoftim për çdo problem të ri në të, dhe emri yt shfaqet te raportet e saj.",
+  stAdd: "Adopto këtë rrugë",
+  stSponsor: "Si shkollë ose biznes (opsionale)",
+  stOpen: "{n} probleme të hapura",
+  stAllGood: "S'ka probleme të hapura 🎉",
+  stNone: "Ende nuk kujdesesh për asnjë rrugë.",
+  stRemove: "Mos u kujdes më",
+  stAdopted: "Kujdeset: {names}",
+  chatTranslate: "Shih përkthimin",
+  chatOriginal: "Shih origjinalin",
+  chatAnnouncement: "Njoftim nga komuna",
+  cameBack: "U rikthye pas rregullimit",
+  top10Title: "Top 10 këtë muaj",
+  top10Intro: "Voto me “E shoh edhe unë”. Komuna e sheh këtë listë.",
+  top10None: "Ende s'ka vota këtë muaj.",
+  speedTitle: "Sa shpejt rregullohet çdo lagje",
+  speedRow: "{d} ditë mesatarisht · {w}% brenda një jave",
+  speedNone: "Ende asgjë e rregulluar",
+  cameBackN: "↺ {n} u rikthyen",
+  streetPlaceholder: "Rruga ose vendi, p.sh. Agim Ramadani",
+  streetNone: "S'u gjet asnjë rrugë. Lëviz hartën.",
+  // community chat
+  tabChat: "Biseda",
+  chatTitle: "Biseda e komunitetit",
+  chatIntro: "Fol me fqinjët për rrugët tuaja dhe rregulloni gjërat bashkë. AI-ja e mban bisedën miqësore.",
+  chatCity: "Gjithë qyteti",
+  chatYourArea: "Lagjja jote",
+  chatAreas: "Lagjet",
+  chatToday: "{n} sot",
+  chatNoMessages: "Ende s'ka mesazhe",
+  chatEmpty: "Ende s'ka mesazhe. Përshëndeti fqinjët!",
+  chatPlaceholder: "Shkruaj një mesazh…",
+  chatEarlier: "Shfaq mesazhet e mëparshme",
+  chatReport: "Raporto mesazhin",
+  chatReported: "Faleminderit. Mesazhi fshihet kur mjaft fqinjë e raportojnë.",
+  chatDelete: "Fshije mesazhin",
+  chatBadgeCity: "Komuna",
+  chatBadgeMj: "Mjeshtër",
+  chatShare: "Ndaje në bisedë",
+  chatAttached: "Raporti u bashkëngjit",
+  chatRules: "Ji i sjellshëm. Pa fyerje, reklama apo numra telefoni.",
   tagline: "Vëreje. Fotografoje. U rregullua.",
   skip: "Kalo",
   yourName: "Emri juaj",
@@ -355,7 +629,7 @@ const sq: Dict = {
   step2: "2 · Cili është problemi?",
   step3: "3 · Ku?",
   useMyLocation: "Vendndodhja ime",
-  dragHint: "Zhvendose kunjin te vendi i saktë.",
+  dragHint: "Shkruaj rrugën, ose lëviz hartën që kunja të jetë te vendi i saktë.",
   locPermOff: "Vendndodhja është e çaktivizuar. Zhvendose kunjin te problemi.",
   gpsFail: "GPS nuk u gjet. Zhvendose kunjin te problemi.",
   step4: "4 · Shto një shënim (opsionale)",
@@ -480,6 +754,99 @@ const sq: Dict = {
   whereLiveHint: "Zgjidhni lagjen tuaj. Aty mund të merrni punë të vogla dhe të fitoni distinktivë rregulluesi.",
   elsewhere: "Diku tjetër",
   errArea: "Ju lutem zgjidhni lagjen tuaj",
+  mjTitle: "Mjeshtri",
+  mjIntro: "Vullnetarë me zanat që rregullojnë gjëra në lagje kur komuna nuk punon, si të dielave.",
+  mjBecome: "Bëhu mjeshtër",
+  mjBecomeBody: "Hidraulik, bojaxhi, murator, saldator…? Trego dëshmi për zanatin dhe ndihmo lagjen. Fiton distinktivë dhe shpërblime nga partnerët.",
+  mjSignUp: "Regjistrohu me dëshmi",
+  mjYouAre: "Je mjeshtër i verifikuar",
+  mjVerifiedAi: "Dokumenti yt u kontrollua dhe u pranua nga AI.",
+  mjVerifiedCity: "U pranua nga komuna.",
+  mjVerifiedShort: "I verifikuar",
+  mjPendingShort: "Në kontroll",
+  mjSeeJobs: "Shih punët që mund t'i marrësh",
+  mjPending: "Dokumenti yt po kontrollohet",
+  mjPendingBody: "Një zyrtar i komunës do ta shohë së shpejti. Do të marrësh njoftim.",
+  mjRejected: "Nuk mundëm ta verifikojmë zanatin",
+  mjTryAgain: "Dërgo një dokument tjetër",
+  mjFreeSunday: "I lirë të dielën",
+  mjNone: "Ende nuk ka mjeshtër që përputhet.",
+  mjJobsDone: "{n} punë të kryera",
+  mjApplyIntro: "Mjeshtri merr punë me zanat që AI thotë se janë shumë për një fqinj të zakonshëm, si një stol i thyer, një parmak i lirshëm ose një kanal i bllokuar. Është punë vullnetare për hapësirat publike.",
+  mjSkills: "Çfarë di të bësh?",
+  mjSafetyNote: "Rryma e gjallë, gazi, rrugët dhe puna në lartësi mbeten gjithmonë për ekipin e komunës.",
+  mjDays: "Kur je i lirë?",
+  mjBio: "Disa fjalë për ty",
+  mjBioHint: "p.sh. Hidraulik prej 15 vitesh, i lirë shumicën e të dielave",
+  mjProof: "Dëshmi për zanatin",
+  mjProofHint: "Diplomë nga shkolla profesionale, certifikatë zanati, licencë ose letër nga punëdhënësi. Mos dërgo letërnjoftimin.",
+  mjProofPhoto: "Bëj foto",
+  mjProofFile: "Zgjidh skedar",
+  mjFromPhotos: "Nga fotot",
+  mjPrivacy: "Dokumentin e sheh vetëm kontrolli i AI dhe stafi i komunës. Nuk bëhet kurrë publik.",
+  mjChecking: "AI po e lexon dokumentin tënd…",
+  mjSend: "Dërgo për kontroll",
+  mjNeed: "Zgjidh të paktën një zanat dhe shto dëshminë.",
+  mjDoneOk: "Je mjeshtër! ✓",
+  mjDoneOkBody: "AI e verifikoi dokumentin. Tani mund të marrësh punë me zanat: {skills}.",
+  mjDoneBad: "Dokumenti nuk u pranua",
+  mjDoneBadBody: "AI nuk mundi ta verifikojë këtë dokument. Provo një foto më të qartë ose një dokument tjetër.",
+  mjCardBody: "Vullnetarë me zanat për të dielat dhe festat. Gjej një ose bëhu një.",
+  mjCardVerified: "Je i verifikuar. Punët me zanat shfaqen në listën tënde.",
+  mjJobTitle: "Kjo kërkon një mjeshtër: {skill}",
+  mjJobBody: "Shumë për një fqinj të zakonshëm, por një vullnetar me zanat mund ta rregullojë, edhe të dielën.",
+  mjAsk: "Pyet një mjeshtër",
+  mjAreYou: "Je mjeshtër? Regjistrohu",
+  mjAskedTitle: "U pyet! 🔧",
+  mjAsked: "{n} mjeshtër me zanatin e duhur morën njoftim.",
+  mjAskedNone: "Ende nuk ka mjeshtër me këtë zanat. Puna mbetet e hapur.",
+  skill_plumbing: "Hidraulikë",
+  skill_electrics: "Elektrikë",
+  skill_building: "Ndërtim",
+  skill_painting: "Lyerje",
+  skill_carpentry: "Zdrukthëtari",
+  skill_gardening: "Kopshtari",
+  skill_welding: "Saldim",
+  skill_any: "një dorë me zanat",
+  day_weekday_evenings: "Mbrëmjet e javës",
+  day_saturday: "E shtunë",
+  day_sunday: "E diel",
+  day_holidays: "Festat",
+  aiWroteNote: "AI e shkroi këtë nga fotoja juaj. Ndryshojeni nëse doni.",
+  aiWroteDesc: "Përshkrimi u shkrua nga AI sipas fotos",
+  aiWillBlur: "{n} fytyrë/targa do të turbullohen për privatësi",
+  clear: "Fshij",
+  blurredN: "{n} të turbulluara për privatësi",
+  reopenedN: "Rihapur {n}×",
+  rateTitle: "A është rregulluar vërtet?",
+  rateBody: "Ju e raportuat këtë. Tregojini komunës nëse rregullimi është i mirë.",
+  rateYes: "Po, u rregullua",
+  rateNo: "Nuk u rregullua",
+  rateBadTitle: "Nuk u rregullua?",
+  rateBadBody: "Raporti kthehet në hartë dhe komuna njoftohet se rregullimi nuk funksionoi.",
+  rateBadYes: "Rihape",
+  rateThanksOk: "Faleminderit që e konfirmuat rregullimin!",
+  rateThanksBad: "Është sërish në hartë. Komuna do ta shqyrtojë përsëri.",
+  ratedOk: "Raportuesi e konfirmoi rregullimin",
+  ratedOkMine: "Ju e konfirmuat rregullimin",
+  rewardsTitle: "Shpërblime",
+  rewardsBalance: "{n} distinktivë për t'i shpenzuar",
+  rewardsIntro: "Partnerët lokalë i falënderojnë rregulluesit. Shpenzoni distinktivë për një shpërblim dhe tregoni kodin te partneri.",
+  rewardGet: "Merre",
+  rewardNeed: "Edhe {n} distinktivë",
+  rewardCost: "{n} distinktivë",
+  rewardLeft: "Kanë mbetur {n}",
+  rewardConfirmTitle: "Ta merrni këtë shpërblim?",
+  rewardConfirmBody: "{title} nga {partner} për {n} distinktivë.",
+  rewardGotTitle: "Kuponi juaj 🎉",
+  rewardGotBody: "Tregoni kodin {code} te {partner}. E gjeni te Shpërblime.",
+  rewardNone: "Tani për tani nuk ka shpërblime. Kontrolloni së shpejti.",
+  myVouchers: "Kuponët e mi",
+  voucherUsed: "I përdorur",
+  voucherReady: "Gati për përdorim",
+  nextRewardProgress: "{n}/{cost} distinktivë deri te {title} te {partner}",
+  rewardReady: "Mund ta merrni {title} te {partner}!",
+  seeRewards: "Shih shpërblimet e partnerëve",
   kind_real_photo: "foto e vërtetë",
   kind_screenshot: "pamje ekrani",
   kind_photo_of_screen: "foto e një ekrani",
@@ -525,7 +892,6 @@ const sq: Dict = {
   nextLevel: "Edhe {n} distinktivë deri në nivelin tjetër",
   topLevel: "Niveli më i lartë. Faleminderit!",
   badgesShort: "distinktivë",
-  rewardOwed: "Shpërblimi {e} është në rrugë",
   setAreaTitle: "Ku jetoni?",
   setAreaBody: "Opsionale: zgjidhni lagjen për të parë së pari punët afër shtëpisë dhe për të marrë njoftim për punë të reja.",
   setArea: "Zgjidh lagjen",
@@ -540,7 +906,7 @@ const sq: Dict = {
   how1: "Merrni çdo punë që AI e shënon të sigurt, në çdo lagje: mbeturina, hedhje, rrugë të bllokuara.",
   how2: "Rregullojeni brenda {h} orësh, përndryshe kthehet në hartë për dikë tjetër.",
   how3: "Dërgoni një foto pas. Komuna e kontrollon dhe ju fitoni një distinktiv.",
-  how4: "Çdo {goal} distinktivë fitoni €{eur}.",
+  how4: "Shpenzoni distinktivët për shpërblime nga partnerët, si një darkë falas për 2.",
   topFixers: "Rregulluesit më të mirë",
   canFixTitle: "Mund ta rregulloni këtë",
   earnBadge: "Është në lagjen tuaj. Rregullojeni, dërgoni një foto pas dhe fitoni një distinktiv.",
@@ -585,10 +951,7 @@ const sq: Dict = {
   fixVerified: "U rregullua nga një fqinj ✓",
   fixerTitle: "Rregullues i lagjes",
   fixerBadges: "{n} distinktivë rregulluesi",
-  fixerProgress: "{n}/{goal} deri te shpërblimi i ardhshëm prej {eur} €",
   fixerPending: "{n} presin kontrollin e komunës",
-  fixerEarned: "Shpërblime të fituara: {e} · të paguara: {p}",
-  fixerRewardNote: "Çdo 20 rregullime të pranuara fitojnë 10 €, që jua paguan komuna.",
   canFixHere: "Punë që mund t'i rregulloni në {area}",
   canFixEmpty: "Tani nuk ka punë të hapura që mund t'i rregulloni në {area}.",
   fixSent: "Faleminderit! Komuna do ta kontrollojë foton. Pasi të pranohet, bëhet distinktiv rregulluesi.",
@@ -597,6 +960,77 @@ const sq: Dict = {
 };
 
 const hu: Dict = {
+  cuTitle: "Takarítási napok",
+  cuIntro: "Fogj össze a szomszédaiddal, és takarítsatok ki egy utcát vagy parkot. Aki eljön, jelvényt kap.",
+  cuNew: "Takarítási nap szervezése",
+  cuNone: "Még nincs tervezett takarítási nap. Légy te az első!",
+  cuGoing: "{n} jön",
+  cuImGoing: "Ott leszek",
+  cuYoureGoing: "Ott leszel ✓",
+  cuNotGoing: "Mégsem tudok jönni",
+  cuWhat: "Mit takarítotok?",
+  cuWhatPh: "pl. Kitakarítjuk az iskola melletti parkot",
+  cuWhere: "Hol találkoztok?",
+  cuWhen: "Mikor?",
+  cuRoom: "Melyik környéknek?",
+  cuDetails: "Részletek (nem kötelező): mit hozzatok, meddig tart",
+  cuCreate: "Szomszédok meghívása",
+  cuOrganiser: "Szervező: {name}",
+  cuWhoCame: "Ki jött el?",
+  cuWhoCameHint: "Jelöld be, aki eljött. Mindenki kap egy jelvényt.",
+  cuSaveAttendance: "Mentés és jelvények kiosztása",
+  cuSaved: "Köszönjük! A jelvények kiosztva.",
+  cuCancel: "Takarítási nap lemondása",
+  cuCancelAsk: "Lemondod? Mindenki, aki jönne, értesítést kap.",
+  cuCancelled: "Lemondva",
+  cuDone: "Lezajlott ✓",
+  cuPast: "Korábbi takarítási napok",
+  cuToday: "Ma",
+  cuTomorrow: "Holnap",
+  cuOpen: "Takarítási nap megnyitása",
+  cuPeople: "Kik jönnek",
+  stTitle: "Utcáim",
+  stIntro: "Fogadj örökbe egy utcát. Értesítést kapsz minden új problémáról rajta, és a neved megjelenik a bejelentéseinél.",
+  stAdd: "Utca örökbefogadása",
+  stSponsor: "Iskolaként vagy cégként (nem kötelező)",
+  stOpen: "{n} nyitott probléma",
+  stAllGood: "Nincs nyitott probléma 🎉",
+  stNone: "Még nem gondozol egy utcát sem.",
+  stRemove: "Gondozás befejezése",
+  stAdopted: "Gondozza: {names}",
+  chatTranslate: "Fordítás",
+  chatOriginal: "Eredeti",
+  chatAnnouncement: "Városi közlemény",
+  cameBack: "Javítás után újra előjött",
+  top10Title: "Top 10 ebben a hónapban",
+  top10Intro: "Szavazz az „Én is látom” gombbal. A város látja ezt a listát.",
+  top10None: "Ebben a hónapban még nincs szavazat.",
+  speedTitle: "Milyen gyorsan javítanak környékenként",
+  speedRow: "átlag {d} nap · {w}% egy héten belül",
+  speedNone: "Még nincs javítás",
+  cameBackN: "↺ {n} visszatért",
+  streetPlaceholder: "Utca vagy hely, pl. Agim Ramadani",
+  streetNone: "Nincs ilyen utca. Mozgasd inkább a térképet.",
+  // community chat
+  tabChat: "Csevegés",
+  chatTitle: "Közösségi csevegés",
+  chatIntro: "Beszélgess a szomszédaiddal az utcáitokról, és javítsatok meg dolgokat közösen. Az MI barátságosan tartja a csevegést.",
+  chatCity: "Az egész város",
+  chatYourArea: "A te környéked",
+  chatAreas: "Környékek",
+  chatToday: "ma {n}",
+  chatNoMessages: "Még nincs üzenet",
+  chatEmpty: "Még nincs üzenet. Köszönj a szomszédaidnak!",
+  chatPlaceholder: "Írj üzenetet…",
+  chatEarlier: "Korábbi üzenetek betöltése",
+  chatReport: "Üzenet jelentése",
+  chatReported: "Köszönjük. Az üzenet elrejtődik, ha elég szomszéd jelenti.",
+  chatDelete: "Üzenet törlése",
+  chatBadgeCity: "Város",
+  chatBadgeMj: "Mjeshtër",
+  chatShare: "Megosztás a csevegésben",
+  chatAttached: "Bejelentés csatolva",
+  chatRules: "Légy kedves. Se sértés, se reklám, se telefonszám.",
   tagline: "Észreveszed. Lefotózod. Megjavítjuk.",
   skip: "Kihagyás",
   yourName: "Neved",
@@ -638,7 +1072,7 @@ const hu: Dict = {
   step2: "2 · Mi a probléma?",
   step3: "3 · Hol?",
   useMyLocation: "Saját helyzetem",
-  dragHint: "Húzd a tűt a pontos helyre.",
+  dragHint: "Írd be az utcát, vagy mozgasd a térképet, hogy a tű a pontos helyen legyen.",
   locPermOff: "A helymeghatározás ki van kapcsolva. Húzd a tűt a problémához.",
   gpsFail: "Nincs GPS-jel. Húzd a tűt a problémához.",
   step4: "4 · Megjegyzés (nem kötelező)",
@@ -763,6 +1197,99 @@ const hu: Dict = {
   whereLiveHint: "Válaszd ki a városrészed. Ott kisebb munkákat vállalhatsz és javító kitűzőket szerezhetsz.",
   elsewhere: "Máshol",
   errArea: "Válaszd ki a városrészed",
+  mjTitle: "Mjeshtri",
+  mjIntro: "Szakképzett önkéntesek, akik akkor javítanak a környéken, amikor a város nem dolgozik, például vasárnap.",
+  mjBecome: "Legyél mester",
+  mjBecomeBody: "Vízszerelő, festő, kőműves, hegesztő…? Igazold a szakmád, és segíts a környékednek. Jelvényeket és partneri jutalmakat kapsz.",
+  mjSignUp: "Jelentkezés igazolással",
+  mjYouAre: "Igazolt mester vagy",
+  mjVerifiedAi: "Az AI ellenőrizte és elfogadta a dokumentumodat.",
+  mjVerifiedCity: "A város jóváhagyta.",
+  mjVerifiedShort: "Igazolt",
+  mjPendingShort: "Ellenőrzés alatt",
+  mjSeeJobs: "Vállalható munkák",
+  mjPending: "A dokumentumod ellenőrzés alatt",
+  mjPendingBody: "A város egy munkatársa hamarosan megnézi. Értesítést kapsz.",
+  mjRejected: "Nem tudtuk igazolni a szakmádat",
+  mjTryAgain: "Másik dokumentum küldése",
+  mjFreeSunday: "Vasárnap ráér",
+  mjNone: "Még nincs ilyen mester.",
+  mjJobsDone: "{n} elvégzett munka",
+  mjApplyIntro: "A mesterek olyan szakmunkákat vállalnak, amelyek az AI szerint túl sok egy átlagos szomszédnak, például egy törött pad, egy laza korlát vagy egy eldugult lefolyó. Önkéntes munka közterületen.",
+  mjSkills: "Mihez értesz?",
+  mjSafetyNote: "Az áram alatti vezetékek, a gáz, az utak és a magasban végzett munka mindig a városi csapatnál marad.",
+  mjDays: "Mikor érsz rá?",
+  mjBio: "Pár szó magadról",
+  mjBioHint: "pl. 15 éve vízszerelő vagyok, a legtöbb vasárnap ráérek",
+  mjProof: "A szakmád igazolása",
+  mjProofHint: "Szakiskolai bizonyítvány, szakmai tanúsítvány, engedély vagy munkáltatói levél. Ne küldd el a személyi igazolványod.",
+  mjProofPhoto: "Fotó készítése",
+  mjProofFile: "Fájl választása",
+  mjFromPhotos: "A fotók közül",
+  mjPrivacy: "A dokumentumot csak az AI-ellenőrzés és a városi munkatársak látják. Soha nem nyilvános.",
+  mjChecking: "Az AI olvassa a dokumentumodat…",
+  mjSend: "Küldés ellenőrzésre",
+  mjNeed: "Válassz legalább egy szakmát, és add hozzá az igazolást.",
+  mjDoneOk: "Mester lettél! ✓",
+  mjDoneOkBody: "Az AI igazolta a dokumentumodat. Mostantól vállalhatsz szakmunkát: {skills}.",
+  mjDoneBad: "A dokumentumot nem fogadtuk el",
+  mjDoneBadBody: "Az AI nem tudta igazolni ezt a dokumentumot. Próbálj élesebb fotót vagy másik dokumentumot.",
+  mjCardBody: "Szakképzett önkéntesek vasárnapra és ünnepekre. Keress egyet, vagy legyél te az.",
+  mjCardVerified: "Igazolt vagy. A szakmunkák megjelennek a listádban.",
+  mjJobTitle: "Ehhez mester kell: {skill}",
+  mjJobBody: "Túl sok egy átlagos szomszédnak, de egy szakképzett önkéntes megjavíthatja, akár vasárnap is.",
+  mjAsk: "Mester hívása",
+  mjAreYou: "Mester vagy? Jelentkezz",
+  mjAskedTitle: "Elküldve! 🔧",
+  mjAsked: "{n} megfelelő szakmájú mester kapott értesítést.",
+  mjAskedNone: "Még nincs ilyen szakmájú mester. A munka nyitva marad.",
+  skill_plumbing: "Vízszerelés",
+  skill_electrics: "Villanyszerelés",
+  skill_building: "Kőművesmunka",
+  skill_painting: "Festés",
+  skill_carpentry: "Asztalosmunka",
+  skill_gardening: "Kertészet",
+  skill_welding: "Hegesztés",
+  skill_any: "egy szakember",
+  day_weekday_evenings: "Hétköznap este",
+  day_saturday: "Szombat",
+  day_sunday: "Vasárnap",
+  day_holidays: "Ünnepnapok",
+  aiWroteNote: "Ezt az AI írta a fotód alapján. Módosíthatod.",
+  aiWroteDesc: "A leírást az AI írta a fotó alapján",
+  aiWillBlur: "{n} arc vagy rendszám elhomályosítva lesz",
+  clear: "Törlés",
+  blurredN: "{n} elhomályosítva",
+  reopenedN: "{n}× újranyitva",
+  rateTitle: "Tényleg megjavították?",
+  rateBody: "Te jelentetted. Mondd meg a városnak, jó-e a javítás.",
+  rateYes: "Igen, kész",
+  rateNo: "Nincs kész",
+  rateBadTitle: "Nincs megjavítva?",
+  rateBadBody: "A bejelentés visszakerül a térképre, és a város megtudja, hogy a javítás nem sikerült.",
+  rateBadYes: "Újranyitás",
+  rateThanksOk: "Köszönjük, hogy megerősítetted!",
+  rateThanksBad: "Újra a térképen van. A város ismét megnézi.",
+  ratedOk: "A bejelentő megerősítette a javítást",
+  ratedOkMine: "Megerősítetted a javítást",
+  rewardsTitle: "Jutalmak",
+  rewardsBalance: "{n} elkölthető jelvény",
+  rewardsIntro: "Helyi partnerek köszönik meg a javítók munkáját. Válts jelvényeket jutalomra, és mutasd fel a kódot a partnernél.",
+  rewardGet: "Kérem",
+  rewardNeed: "Még {n} jelvény",
+  rewardCost: "{n} jelvény",
+  rewardLeft: "Még {n} maradt",
+  rewardConfirmTitle: "Kéred ezt a jutalmat?",
+  rewardConfirmBody: "{title} – {partner}, {n} jelvényért.",
+  rewardGotTitle: "Az utalványod 🎉",
+  rewardGotBody: "Mutasd fel a(z) {code} kódot itt: {partner}. A Jutalmak között is megtalálod.",
+  rewardNone: "Most nincs elérhető jutalom. Nézz vissza később.",
+  myVouchers: "Utalványaim",
+  voucherUsed: "Felhasználva",
+  voucherReady: "Felhasználható",
+  nextRewardProgress: "{n}/{cost} jelvény: {title} – {partner}",
+  rewardReady: "Megkaphatod: {title} – {partner}!",
+  seeRewards: "Partneri jutalmak",
   kind_real_photo: "valódi fotó",
   kind_screenshot: "képernyőkép",
   kind_photo_of_screen: "képernyőről készült fotó",
@@ -808,7 +1335,6 @@ const hu: Dict = {
   nextLevel: "Még {n} jelvény a következő szintig",
   topLevel: "Legfelső szint. Köszönjük!",
   badgesShort: "jelvény",
-  rewardOwed: "{e} jutalom úton van",
   setAreaTitle: "Hol laksz?",
   setAreaBody: "Nem kötelező: válaszd ki a városrészed, hogy az otthonod közeli munkák legyenek elöl, és értesítést kapj az újakról.",
   setArea: "Városrész",
@@ -823,7 +1349,7 @@ const hu: Dict = {
   how1: "Vállalj bármilyen munkát, amit az AI biztonságosnak jelöl, bármelyik városrészben: szemét, lerakás, elzárt út.",
   how2: "Javítsd meg {h} órán belül, különben visszakerül a térképre.",
   how3: "Küldj utána fotót. A város ellenőrzi, és kapsz egy javító jelvényt.",
-  how4: "Minden {goal} jelvény €{eur}-t ér.",
+  how4: "A jelvényeket partnerek jutalmaira válthatod, például egy ingyen vacsorára 2 főre.",
   topFixers: "A legjobb szomszéd javítók",
   canFixTitle: "Ezt te is megjavíthatod",
   earnBadge: "A városrészedben van. Javítsd meg, küldj fotót, és szerezz jelvényt.",
@@ -868,10 +1394,7 @@ const hu: Dict = {
   fixVerified: "Egy szomszéd megjavította ✓",
   fixerTitle: "Szomszédsági javító",
   fixerBadges: "{n} javító kitűző",
-  fixerProgress: "{n}/{goal} a következő {eur} € jutalomig",
   fixerPending: "{n} ellenőrzésre vár",
-  fixerEarned: "Megszerzett jutalom: {e} · kifizetve: {p}",
-  fixerRewardNote: "Minden 20 elfogadott javítás 10 € jutalmat ér, amit az önkormányzat fizet ki.",
   canFixHere: "Munkák, amiket megjavíthatsz itt: {area}",
   canFixEmpty: "Most nincs nyitott munka itt: {area}.",
   fixSent: "Köszönjük! Az önkormányzat ellenőrzi a fotót. Elfogadás után javító kitűző lesz belőle.",
@@ -879,11 +1402,51 @@ const hu: Dict = {
   yourArea: "A városrészed",
 };
 
-const DICTS: Record<Lang, Dict> = { en, sq, hu };
+const DICTS: Record<string, Dict> = { en, sq, hu };
 export type TKey = keyof Dict;
 
 /** Server error messages (English) shown in the user's language. */
-const API_ERRORS: Record<string, Partial<Record<Lang, string>>> = {
+const API_ERRORS: Record<string, Partial<Record<"sq" | "hu", string>>> = {
+  "Clean-up day not found": { sq: "Dita e pastrimit nuk u gjet", hu: "A takarítási nap nem található" },
+  "Pick a time later than now": { sq: "Zgjidh një orë më vonë se tani", hu: "Válassz a mostaninál későbbi időpontot" },
+  "Pick a day within the next 2 months": { sq: "Zgjidh një ditë brenda 2 muajve", hu: "Válassz napot a következő 2 hónapon belül" },
+  "You already have 3 clean-up days planned": { sq: "Ke tashmë 3 ditë pastrimi të planifikuara", hu: "Már 3 takarítási napot terveztél" },
+  "This clean-up day was cancelled": { sq: "Kjo ditë pastrimi u anulua", hu: "Ezt a takarítási napot lemondták" },
+  "This clean-up day has already started": { sq: "Kjo ditë pastrimi ka filluar", hu: "Ez a takarítási nap már elkezdődött" },
+  "You're the organiser. Cancel the clean-up day instead.": { sq: "Ti je organizatori. Anuloje ditën e pastrimit.", hu: "Te vagy a szervező. Inkább mondd le a takarítási napot." },
+  "Only the organiser can confirm who came": { sq: "Vetëm organizatori mund të konfirmojë kush erdhi", hu: "Csak a szervező igazolhatja, ki jött el" },
+  "Only the organiser can cancel it": { sq: "Vetëm organizatori mund ta anulojë", hu: "Csak a szervező mondhatja le" },
+  "You can confirm who came once the clean-up day has started": { sq: "Mund të konfirmosh kush erdhi pasi të fillojë dita e pastrimit", hu: "A résztvevőket a takarítási nap kezdete után igazolhatod" },
+  "It's too late to change who came": { sq: "Është vonë për të ndryshuar kush erdhi", hu: "Már túl késő módosítani, ki jött el" },
+  "Crew accounts can't organise clean-up days": { sq: "Llogaritë e ekipit nuk mund të organizojnë ditë pastrimi", hu: "Brigádfiókok nem szervezhetnek takarítási napot" },
+  "You already look after this street": { sq: "Tashmë kujdesesh për këtë rrugë", hu: "Ezt az utcát már gondozod" },
+  "You can look after up to 5 streets": { sq: "Mund të kujdesesh për deri në 5 rrugë", hu: "Legfeljebb 5 utcát gondozhatsz" },
+  "Write the street's name": { sq: "Shkruaj emrin e rrugës", hu: "Írd be az utca nevét" },
+  "Street not found": { sq: "Rruga nuk u gjet", hu: "Az utca nem található" },
+  "Crew accounts can't adopt streets": { sq: "Llogaritë e ekipit nuk mund të adoptojnë rrugë", hu: "Brigádfiókok nem fogadhatnak örökbe utcát" },
+  "Translation isn't available right now. Try again later.": { sq: "Përkthimi s'është i disponueshëm tani. Provo më vonë.", hu: "A fordítás most nem érhető el. Próbáld később." },
+  "This chat room doesn't exist": { sq: "Kjo dhomë bisede nuk ekziston", hu: "Ez a csevegőszoba nem létezik" },
+  "You're sending messages too fast. Wait a moment.": { sq: "Po dërgon mesazhe shumë shpejt. Prit pak.", hu: "Túl gyorsan küldesz üzeneteket. Várj egy kicsit." },
+  "You can't report your own message": { sq: "Nuk mund ta raportosh mesazhin tënd", hu: "A saját üzenetedet nem jelentheted" },
+  "You can only delete your own messages": { sq: "Mund të fshish vetëm mesazhet e tua", hu: "Csak a saját üzeneteidet törölheted" },
+  "Message not found": { sq: "Mesazhi nuk u gjet", hu: "Az üzenet nem található" },
+  "Write a message first": { sq: "Shkruaj fillimisht një mesazh", hu: "Előbb írj egy üzenetet" },
+  "This message breaks the community rules": { sq: "Ky mesazh shkel rregullat e komunitetit", hu: "Ez az üzenet sérti a közösségi szabályokat" },
+  "This job needs a verified mjeshtër": { sq: "Kjo punë kërkon një mjeshtër të verifikuar", hu: "Ehhez a munkához igazolt mester kell" },
+  "You don't have the skill this job needs": { sq: "Nuk e ke zanatin që kërkon kjo punë", hu: "Nincs meg az ehhez szükséges szakmád" },
+  "Only residents can become a mjeshtër": { sq: "Vetëm banorët mund të bëhen mjeshtër", hu: "Csak lakosok lehetnek mesterek" },
+  "Pick at least one skill": { sq: "Zgjidh të paktën një zanat", hu: "Válassz legalább egy szakmát" },
+  "The document is larger than 10 MB": { sq: "Dokumenti është më i madh se 10 MB", hu: "A dokumentum nagyobb 10 MB-nál" },
+  "You're already a verified mjeshtër": { sq: "Je tashmë mjeshtër i verifikuar", hu: "Már igazolt mester vagy" },
+  "This job isn't one for a mjeshtër": { sq: "Kjo punë nuk është për mjeshtër", hu: "Ez nem mestermunka" },
+  "A mjeshtër was already asked in the last hour": { sq: "Një mjeshtër u pyet tashmë në orën e fundit", hu: "Az elmúlt órában már szóltunk a mestereknek" },
+  "Only the person who reported it can rate the fix": { sq: "Vetëm ai që e raportoi mund ta vlerësojë rregullimin", hu: "Csak a bejelentő értékelheti a javítást" },
+  "You can rate it once it's fixed": { sq: "Mund ta vlerësoni kur të rregullohet", hu: "Javítás után értékelheted" },
+  "You already rated this fix": { sq: "E keni vlerësuar tashmë këtë rregullim", hu: "Ezt a javítást már értékelted" },
+  "Not enough badges for this reward yet": { sq: "Ende nuk keni mjaft distinktivë për këtë shpërblim", hu: "Még nincs elég jelvényed ehhez a jutalomhoz" },
+  "This reward is sold out": { sq: "Ky shpërblim ka mbaruar", hu: "Ez a jutalom elfogyott" },
+  "This reward is no longer on offer": { sq: "Ky shpërblim nuk ofrohet më", hu: "Ez a jutalom már nem elérhető" },
+  "Only residents can get rewards": { sq: "Vetëm banorët mund të marrin shpërblime", hu: "Csak lakosok kaphatnak jutalmat" },
   "That's the photo from the report. Take a new photo after fixing it": { sq: "Kjo është fotoja e raportit. Bëni një foto të re pas rregullimit", hu: "Ez a bejelentés fotója. Készíts új fotót a javítás után" },
   "This photo was already used in another report. Take a new photo": { sq: "Kjo foto është përdorur në një raport tjetër. Bëni një foto të re", hu: "Ezt a fotót már egy másik bejelentésben használták. Készíts újat" },
   "The AI check says this isn't safe for neighbours": { sq: "Kontrolli AI thotë se kjo nuk është e sigurt për banorët", hu: "Az AI szerint ez nem biztonságos szomszédoknak" },
@@ -909,13 +1472,43 @@ const API_ERRORS: Record<string, Partial<Record<Lang, string>>> = {
   "Can't reach MendMap. Check your connection.": { sq: sq.noConnection, hu: hu.noConnection },
 };
 
+// ---------- AI translations for other languages ----------
+type Remote = { v: string; dict: Partial<Dict>; errors: Record<string, string>; complete: boolean };
+const REMOTE_KEY = (l: string) => `mendmap.i18n.${l}`;
+
+/** Every English text the app shows: UI strings and server error messages. */
+const ALL_EN = [...Object.values(en), ...Object.keys(API_ERRORS)];
+const VERSION = (() => {
+  let h = 5381; // djb2 hash: a new version whenever an English text changes
+  for (const c of ALL_EN.join("\u0000")) h = ((h << 5) + h + c.charCodeAt(0)) | 0;
+  return String(h >>> 0);
+})();
+
+async function fetchRemote(lang: string): Promise<Remote | null> {
+  const res = await fetch(`${API_URL}/i18n/translate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lang, strings: ALL_EN }),
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { translations: Record<string, string>; missing: number };
+  const tr = data.translations ?? {};
+  const dict: Partial<Dict> = {};
+  for (const k of Object.keys(en) as (keyof Dict)[]) if (tr[en[k]]) dict[k] = tr[en[k]];
+  const errors: Record<string, string> = {};
+  for (const m of Object.keys(API_ERRORS)) if (tr[m]) errors[m] = tr[m];
+  return { v: VERSION, dict, errors, complete: !data.missing };
+}
+
 // ---------- provider ----------
 const KEY = "mendmap.lang";
 type I18nState = {
   lang: Lang;
-  /** The second language available here (null = only English, e.g. country not supported yet). */
-  localLang: Exclude<Lang, "en"> | null;
+  /** The country's official language offered next to English (null = English only, e.g. UK or Ireland). */
+  localLang: string | null;
   setLang: (l: Lang) => void;
+  /** True while an AI translation of the chosen language is being downloaded. */
+  translating: boolean;
   t: (key: TKey, vars?: Record<string, string | number>) => string;
   tErr: (message: string) => string;
   locale: string;
@@ -929,24 +1522,37 @@ function regionFromDevice(): string | null {
   return Localization.getLocales()[0]?.regionCode?.toUpperCase() ?? null;
 }
 
+/** The country of the phone's internet connection (IP address), e.g. "DE" in Germany. */
+async function countryFromIp(): Promise<string | null> {
+  const lookups: [string, (r: Response) => Promise<string | undefined>][] = [
+    ["https://ipwho.is/?fields=country_code", async (r) => ((await r.json()) as { country_code?: string }).country_code],
+    ["https://get.geojs.io/v1/ip/country.json", async (r) => ((await r.json()) as { country?: string }).country],
+    ["https://api.country.is/", async (r) => ((await r.json()) as { country?: string }).country],
+  ];
+  for (const [url, read] of lookups) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
+      if (!res.ok) continue;
+      const code = (await read(res))?.toUpperCase();
+      if (code && /^[A-Z]{2}$/.test(code)) return code;
+    } catch {
+      // Offline or blocked: try the next one.
+    }
+  }
+  return null;
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [country, setCountry] = useState<string | null>(regionFromDevice());
   const [chosen, setChosen] = useState<Lang | null>(null);
-
-  useEffect(() => {
-    AsyncStorage.getItem(KEY).then((v) => {
-      if (v === "en" || v === "sq" || v === "hu") setChosen(v);
-    });
-    // If location is already allowed, use it to find the country without asking again.
-    (async () => {
-      const perm = await Location.getForegroundPermissionsAsync();
-      if (!perm.granted) return;
-      const pos = await Location.getLastKnownPositionAsync();
-      if (pos) await detect(pos.coords);
-    })().catch(() => {});
-  }, []);
+  const [remote, setRemote] = useState<Record<string, Remote>>({});
+  const [translating, setTranslating] = useState(false);
+  const ipCountry = useRef<string | null>(null);
 
   const detect = useCallback(async (coords: { latitude: number; longitude: number }) => {
+    if (ipCountry.current) return; // the IP address decides the country
     try {
       const [place] = await Location.reverseGeocodeAsync(coords);
       const code = place?.isoCountryCode?.toUpperCase();
@@ -956,16 +1562,72 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  useEffect(() => {
+    AsyncStorage.getItem(KEY).then((v) => {
+      if (v && (v === "en" || LANG_NAME[v])) setChosen(v);
+    });
+    // The country comes from the IP address. If that fails, GPS (when already allowed), then the phone's region.
+    const check = async () => {
+      const ip = await countryFromIp();
+      ipCountry.current = ip;
+      if (ip) return setCountry(ip);
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (!perm.granted) return;
+      const pos = await Location.getLastKnownPositionAsync();
+      if (pos) await detect(pos.coords);
+    };
+    void check().catch(() => {});
+    // Check again when the app comes back (e.g. after travelling or switching a VPN).
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") void check().catch(() => {});
+    });
+    return () => sub.remove();
+  }, [detect]);
+
+  const localLang = (country && COUNTRY_LANG[country]) || null;
+  const deviceLang = Localization.getLocales()[0]?.languageCode;
+  // Default: the local language if the phone is set to it, otherwise English.
+  let lang: Lang = chosen ?? (localLang && deviceLang === localLang ? localLang : "en");
+  if (lang !== "en" && lang !== localLang) lang = "en"; // moved to another country
+
+  // A language without a hand-made translation: use the phone's copy, refresh it from the server.
+  useEffect(() => {
+    if (DICTS[lang]) return;
+    let gone = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      const cached = await AsyncStorage.getItem(REMOTE_KEY(lang)).catch(() => null);
+      const saved: Remote | null = cached ? JSON.parse(cached) : null;
+      if (saved && !gone) setRemote((r) => ({ ...r, [lang]: saved }));
+      if (saved?.v === VERSION && saved.complete) return;
+      setTranslating(true);
+      try {
+        const fresh = await fetchRemote(lang);
+        if (fresh && !gone) {
+          setRemote((r) => ({ ...r, [lang]: fresh }));
+          await AsyncStorage.setItem(REMOTE_KEY(lang), JSON.stringify(fresh));
+          if (!fresh.complete) retry = setTimeout(() => void load(), 60_000); // the AI was busy: finish later
+        }
+      } catch {
+        // Offline: keep English (or the older copy) until the next start.
+      } finally {
+        if (!gone) setTranslating(false);
+      }
+    };
+    void load();
+    return () => {
+      gone = true;
+      if (retry) clearTimeout(retry);
+    };
+  }, [lang]);
+
   const value = useMemo<I18nState>(() => {
-    const localLang = (country && COUNTRY_LANG[country]) || null;
-    const deviceLang = Localization.getLocales()[0]?.languageCode;
-    // Default: the local language if the phone is set to it, otherwise English.
-    let lang: Lang = chosen ?? (localLang && deviceLang === localLang ? localLang : "en");
-    if (lang !== "en" && lang !== localLang) lang = "en"; // moved to another country
-    const dict = DICTS[lang];
+    const dict: Partial<Dict> = DICTS[lang] ?? remote[lang]?.dict ?? {};
+    const errors = remote[lang]?.errors ?? {};
     return {
       lang,
       localLang,
+      translating,
       setLang: (l) => {
         setChosen(l);
         AsyncStorage.setItem(KEY, l);
@@ -975,11 +1637,11 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v));
         return s;
       },
-      tErr: (message) => API_ERRORS[message]?.[lang] ?? message,
-      locale: DATE_LOCALE[lang],
+      tErr: (message) => (API_ERRORS[message] as Record<string, string> | undefined)?.[lang] ?? errors[message] ?? message,
+      locale: dateLocale(lang),
       updateCountryFrom: (c) => void detect(c),
     };
-  }, [country, chosen, detect]);
+  }, [lang, localLang, remote, translating, detect]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

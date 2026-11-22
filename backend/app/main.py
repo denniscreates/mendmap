@@ -18,24 +18,28 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, object_session, selectinload
 
-from . import ai, mailer, photos, schemas
+from . import ai, chat, community, geo, languages, mailer, photos, schemas
 from .auth import JWT_SECRET, admin_user, create_token, current_user, hash_password, verify_password
 from .db import Base, SessionLocal, engine, get_db
 from .insights import (
-    ALERT_RADIUS_M, CLAIM_HOURS, MAX_ACTIVE_CLAIMS, NEIGHBOUR_FIXABLE, NEIGHBOURHOODS, REWARD_EUR, REWARD_EVERY,
-    badges, distance_m, enrich, flag_list, is_flagged, level, neighbour_ok, neighbourhood, priority, route_order,
+    ALERT_RADIUS_M, CLAIM_HOURS, MAX_ACTIVE_CLAIMS, NEIGHBOUR_FIXABLE, NEIGHBOURHOODS, 
+    badges, can_do, distance_m, enrich, flag_list, is_flagged, level, neighbour_ok, neighbourhood, priority, route_order,
+    skill_job,
 )
-from .models import Category, Confirmation, OtpCode, Report, StatusUpdate, User, migrate, now
+from .models import (
+    Category, Confirmation, Mjeshter, OtpCode, PartnerReward, Report, RewardClaim, StatusUpdate, User, migrate, now,
+)
 from .push import send_many, send_status_push
 from .seed import seed
 
 ROOT = Path(__file__).resolve().parent.parent
 UPLOADS = ROOT / "uploads"
+PROOFS = ROOT / "private" / "proofs"  # mjeshtër documents: never served publicly
 ADMIN_DIR = ROOT.parent / "admin"
 PUBLIC_DIR = ROOT.parent / "public"
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
@@ -53,10 +57,16 @@ async def lifespan(_: FastAPI):
     Base.metadata.create_all(engine)
     migrate(engine)
     seed()
+    reminders = asyncio.create_task(community.reminder_loop())
     yield
+    reminders.cancel()
 
 
 app = FastAPI(title="MendMap API", version="2.0.0", lifespan=lifespan)
+app.include_router(chat.router)
+app.include_router(chat.admin_router)
+app.include_router(geo.router)
+app.include_router(community.router)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 UPLOADS.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOADS), name="uploads")
@@ -115,6 +125,9 @@ def out(report: Report) -> schemas.ReportOut:
 def detail(report: Report) -> schemas.ReportDetail:
     d = enrich(schemas.ReportDetail.model_validate(report), report)
     d.reporter_name = report.user.name if report.user else None
+    db = object_session(report)
+    if db is not None and report.address:
+        d.adopted_by = community.adopter_names(db, report.address)
     return d
 
 
@@ -164,7 +177,8 @@ async def ai_review(report_id: int) -> bool:
         path = UPLOADS / Path(r.photo_url).name
     if not path.exists():
         return True
-    res = await ai.check_photo(path.read_bytes())
+    original = path.read_bytes()
+    res = await ai.check_photo(original)
     if not res.get("available"):
         return ai.provider() is None  # no AI configured: nothing to retry
     with SessionLocal() as db:
@@ -187,6 +201,22 @@ async def ai_review(report_id: int) -> bool:
         r.ai_flags = ",".join(flags) or None
         if r.severity is None and r.ai_is_problem:
             r.severity = r.ai_severity
+        r.ai_description = res.get("description") or None
+        r.ai_skilled_ok = int(bool(res.get("skilled_ok")))
+        r.ai_skill_needed = res.get("skill_needed")
+        if not (r.description or "").strip() and r.ai_description and r.ai_is_problem:
+            r.description = r.ai_description  # no text from the citizen: the AI describes the photo
+        # Privacy: blur faces and number plates in the public photo (once; the fingerprint stays the original's).
+        if r.blurred is None:
+            boxes = res.get("blur_boxes") or []
+            blurred = photos.blur(original, boxes)
+            if blurred:
+                try:
+                    path.write_bytes(blurred)
+                except OSError as exc:
+                    logging.getLogger("mendmap").warning("Couldn't blur report %s: %s", report_id, exc)
+                    blurred = None
+            r.blurred = len(boxes) if blurred else 0
         db.commit()
     return True
 
@@ -199,6 +229,7 @@ async def review_then_alert(report_id: int) -> None:
     except Exception as exc:  # the report is saved either way
         logging.getLogger("mendmap").warning("AI review of report %s failed: %s", report_id, exc)
     await alert_neighbours(report_id, "new")
+    await alert_mjeshtrit(report_id)
     # Gemini was busy: try again a little later (twice), so every report gets its AI check.
     for wait in AI_RETRY_S if not ok else ():
         await asyncio.sleep(wait)
@@ -414,6 +445,17 @@ def categories(db: Session = Depends(get_db)):
     return db.scalars(select(Category).order_by(Category.id)).all()
 
 
+@app.post("/i18n/translate", response_model=schemas.TranslateOut, tags=["languages"])
+async def translate_ui(body: schemas.TranslateIn):
+    """The app's texts in the official language of the user's country (English + that language).
+    Translated once by the AI, then served from the cache to everyone. Open without sign-in, so the
+    sign-in screen is translated too; only known languages are accepted."""
+    if body.lang not in languages.LANGS or body.lang in languages.STATIC:
+        raise HTTPException(400, "This language isn't available")
+    found, missing = await languages.translate(body.lang, body.strings)
+    return schemas.TranslateOut(lang=body.lang, translations=found, missing=missing)
+
+
 @app.get("/ai/status", tags=["reports"])
 def ai_status():
     """Which AI features are switched on (no secrets are returned)."""
@@ -422,12 +464,13 @@ def ai_status():
 
 
 @app.post("/ai/check-photo", response_model=schemas.PhotoCheck, tags=["reports"])
-async def check_photo(photo: UploadFile = File(...), _: User = Depends(current_user)):
-    """AI photo check: suggested category and severity, and whether it shows a street problem."""
+async def check_photo(photo: UploadFile = File(...), lang: str = Form("en"), _: User = Depends(current_user)):
+    """AI photo check: suggested category and severity, a description of the photo in the user's
+    language, whether it shows a street problem, and the faces/plates that will be blurred."""
     data = await photo.read()
     if len(data) > MAX_PHOTO_BYTES:
         raise HTTPException(413, "Photo is larger than 10 MB")
-    return await ai.check_photo(data)
+    return await ai.check_photo(data, lang)
 
 
 # ---------- reports ----------
@@ -439,6 +482,7 @@ async def create_report(
     latitude: float = Form(..., ge=-90, le=90),
     longitude: float = Form(..., ge=-180, le=180),
     description: str | None = Form(None, max_length=2000),
+    address: str | None = Form(None, max_length=200),
     severity: int | None = Form(None, ge=1, le=5),
     photo: UploadFile | None = File(None),
     voice: UploadFile | None = File(None),
@@ -472,6 +516,7 @@ async def create_report(
         user_id=user.id,
         category_id=category_id,
         description=(description or "").strip() or None,
+        address=(address or "").strip() or None,
         photo_url=f"/uploads/{name}",
         voice_url=voice_url,
         severity=severity,
@@ -479,11 +524,13 @@ async def create_report(
         longitude=longitude,
         photo_hash=fp,
         ai_flags=f"reused_photo:{reused_from}" if reused_from else None,
+        repeat_of=community.find_repeat(db, category_id, latitude, longitude),
     )
     report.updates.append(StatusUpdate(old_status=None, new_status="reported", comment="Report submitted"))
     db.add(report)
     db.commit()
     background.add_task(review_then_alert, report.id)
+    background.add_task(community.alert_adopters, report.id)
     if voice_url:
         background.add_task(transcribe_voice, report.id, voice_url)
     return out(db.scalar(report_query().where(Report.id == report.id)))
@@ -617,12 +664,24 @@ def public_stats(db: Session = Depends(get_db)):
     """Transparency numbers anyone can see, plus the neighbourhood leaderboard."""
     base = _stats(db)
     areas: dict[str, dict] = {}
-    for lat, lng, st in db.execute(select(Report.latitude, Report.longitude, Report.status)):
+    done = community.fixed_at(db)
+    for rid, lat, lng, st, created, repeat in db.execute(
+            select(Report.id, Report.latitude, Report.longitude, Report.status, Report.created_at, Report.repeat_of)):
         name = neighbourhood(lat, lng) or "Other"
-        a = areas.setdefault(name, {"name": name, "total": 0, "fixed": 0, "open": 0})
+        a = areas.setdefault(name, {"name": name, "total": 0, "fixed": 0, "open": 0, "came_back": 0, "_days": []})
         a["total"] += 1
         a["fixed" if st == "fixed" else "open"] += 1
-    board = [schemas.NeighbourhoodStat(**a, fix_rate=round(a["fixed"] / a["total"], 2)) for a in areas.values()]
+        a["came_back"] += 1 if repeat else 0
+        if st == "fixed" and rid in done:
+            a["_days"].append(max(0.0, (done[rid] - created).total_seconds() / 86400))
+    board = []
+    for a in areas.values():
+        days = a.pop("_days")
+        board.append(schemas.NeighbourhoodStat(
+            **a, fix_rate=round(a["fixed"] / a["total"], 2),
+            avg_fix_days=round(sum(days) / len(days), 1) if days else None,
+            fixed_in_week=round(sum(1 for d in days if d <= 7) / len(days), 2) if days else None,
+        ))
     board.sort(key=lambda a: (-a.total, -a.fix_rate))
     return schemas.PublicStats(
         **base.model_dump(),
@@ -785,8 +844,8 @@ def stats(_: User = Depends(admin_user), db: Session = Depends(get_db)):
 
 # ---------- neighbour fixes ----------
 # A resident of the report's neighbourhood can take a job, fix it and send an "after" photo.
-# The city checks the photo; each verified fix is a fixer badge, and every REWARD_EVERY badges
-# earns a REWARD_EUR reward that the city pays out (recorded in the admin panel).
+# The city (or the AI) checks the photo; each verified fix is a fixer badge that the fixer can
+# spend on partner rewards (see /rewards below).
 
 def _report_full(db: Session, report_id: int) -> Report:
     r = db.scalar(
@@ -804,7 +863,8 @@ def _fixer_counts(db: Session, user_id: int) -> tuple[int, int]:
         .group_by(Report.fix_status)
     ).all()
     d = {k: n for k, n in rows}
-    return d.get("verified", 0), d.get("pending", 0)
+    # Badges: checked fixes plus clean-up days the user came to (or organised well).
+    return d.get("verified", 0) + community.event_badges(db, user_id), d.get("pending", 0)
 
 
 @app.post("/reports/{report_id}/claim", response_model=schemas.ReportDetail, tags=["neighbour fix"])
@@ -815,10 +875,17 @@ async def claim(report_id: int, user: User = Depends(current_user), db: Session 
     release_stale(db)
     r = _report_full(db, report_id)
     area = neighbourhood(r.latitude, r.longitude) or "the area"
-    if r.ai_neighbour_safe == 0 or r.ai_is_problem == 0:
-        raise HTTPException(400, "The AI check says this isn't safe for neighbours")
+    need = skill_job(r)
     if not neighbour_ok(r):
-        raise HTTPException(400, "This problem needs the city crew")
+        if need:
+            if user.mjeshter_status != "approved":
+                raise HTTPException(400, "This job needs a verified mjeshtër")
+            if not can_do(user.mjeshter_skills, need):
+                raise HTTPException(400, "You don't have the skill this job needs")
+        elif r.ai_neighbour_safe == 0 or r.ai_is_problem == 0:
+            raise HTTPException(400, "The AI check says this isn't safe for neighbours")
+        else:
+            raise HTTPException(400, "This problem needs the city crew")
     if r.status != "reported" or r.claimed_by is not None:
         raise HTTPException(409, "Someone is already working on this")
     active = db.scalar(
@@ -831,7 +898,7 @@ async def claim(report_id: int, user: User = Depends(current_user), db: Session 
     r.status = "in_progress"
     r.updated_at = now()
     r.updates.append(StatusUpdate(old_status="reported", new_status="in_progress",
-                                  comment="A neighbour is fixing this."))
+                                  comment="A mjeshtër is fixing this." if need and not neighbour_ok(r) else "A neighbour is fixing this."))
     db.commit()
     r = _report_full(db, report_id)
     if r.user_id != user.id:
@@ -944,15 +1011,46 @@ def my_fixer(user: User = Depends(current_user), db: Session = Depends(get_db)):
     if user.role == "citizen":
         open_ = db.scalars(report_query().where(Report.status == "reported", Report.claimed_by.is_(None))).all()
         # Every job the AI calls safe, anywhere; your own neighbourhood first, then by priority.
-        available = sorted((out(r) for r in open_ if neighbour_ok(r)),
+        skills = user.mjeshter_skills
+        available = sorted((out(r) for r in open_ if neighbour_ok(r) or can_do(skills, skill_job(r))),
                            key=lambda r: (r.neighbourhood != user.neighbourhood, -r.priority))
     lvl, nxt = level(verified)
+    spent = _spent(db, user.id)
     return schemas.FixerOut(
         neighbourhood=user.neighbourhood, verified=verified, pending=pending, active=[out(r) for r in active],
-        goal=REWARD_EVERY, reward_eur=REWARD_EUR,
-        rewards_earned=verified // REWARD_EVERY, rewards_paid=user.rewards_paid or 0,
+        balance=max(0, verified - spent), spent=spent, next_reward=_next_reward(db, verified - spent),
         level=lvl, next_level_at=nxt, claim_hours=CLAIM_HOURS, max_active=MAX_ACTIVE_CLAIMS, available=available,
     )
+
+
+@app.post("/reports/{report_id}/rate", response_model=schemas.ReportDetail, tags=["reports"])
+def rate_fix(report_id: int, body: schemas.RateIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The person who reported it says whether it's really fixed. "Not fixed" puts it back on the map,
+    and a neighbour fix loses its badge, so nobody gets credit for a fix that didn't happen."""
+    r = _report_full(db, report_id)
+    if r.user_id != user.id:
+        raise HTTPException(403, "Only the person who reported it can rate the fix")
+    if r.status != "fixed":
+        raise HTTPException(400, "You can rate it once it's fixed")
+    if r.rating is not None:
+        raise HTTPException(409, "You already rated this fix")
+    if body.ok:
+        r.rating = 1
+        r.updates.append(StatusUpdate(old_status="fixed", new_status="fixed", comment="The reporter confirmed it's fixed 👍"))
+    else:
+        r.reopened = (r.reopened or 0) + 1
+        r.status = "reported"
+        note = (body.comment or "").strip()
+        r.updates.append(StatusUpdate(old_status="fixed", new_status="reported",
+                                      comment="The reporter says it isn't fixed yet" + (f": {note}" if note else ".")))
+        if r.fix_status:  # a neighbour fix that didn't hold: no badge, and the job is open again
+            r.fix_status = None
+            r.claimed_by = r.claimed_at = None
+            r.after_photo_url = r.after_hash = None
+            r.fix_ai = r.fix_ai_reason = None
+    r.updated_at = now()
+    db.commit()
+    return detail(_report_full(db, report_id))
 
 
 @app.post("/admin/reports/{report_id}/ai-check", response_model=schemas.ReportDetail, tags=["admin"])
@@ -1051,43 +1149,391 @@ async def verify_fix(
     return detail(_report_full(db, report_id))
 
 
-def _rewards(db: Session) -> list[schemas.RewardOut]:
-    rows = db.execute(
-        select(Report.claimed_by, func.count()).where(Report.fix_status == "verified").group_by(Report.claimed_by)
-    ).all()
-    result = []
-    for uid, verified in rows:
-        u = db.get(User, uid)
-        if not u:
-            continue
-        earned = verified // REWARD_EVERY
-        owed = max(0, earned - (u.rewards_paid or 0))
-        result.append(schemas.RewardOut(
-            user_id=u.id, name=u.name, email=u.email, neighbourhood=u.neighbourhood, verified=verified,
-            rewards_earned=earned, rewards_paid=u.rewards_paid or 0, owed_eur=owed * REWARD_EUR,
-        ))
-    return sorted(result, key=lambda x: (-x.owed_eur, -x.verified))
+# ---------- mjeshtrit: skilled volunteers ----------
+# Plumbers, painters, builders... who fix things on days the city doesn't work (e.g. Sundays). They upload
+# proof of their skill; the AI reads it and approves genuine documents, the rest wait for the city.
+SKILLS = set(ai.SKILLS)
+DAYS = {"weekday_evenings", "saturday", "sunday", "holidays"}
+MJ_AUTO_MIN = 75  # AI confidence needed to approve a document without a person
 
 
-@app.get("/admin/rewards", response_model=list[schemas.RewardOut], tags=["admin"])
-def rewards(_: User = Depends(admin_user), db: Session = Depends(get_db)):
-    """Neighbour fixers, rewards owed first."""
-    return _rewards(db)
+def _mj_auto() -> bool:
+    return os.getenv("MENDMAP_MJESHTER_AUTO", "on").lower() != "off"
 
 
-@app.post("/admin/rewards/{user_id}/paid", response_model=schemas.RewardOut, tags=["admin"])
-def reward_paid(user_id: int, _: User = Depends(admin_user), db: Session = Depends(get_db)):
-    """Record that the city paid this user's rewards. The payment itself happens outside MendMap."""
-    u = db.get(User, user_id)
-    if not u:
-        raise HTTPException(404, "User not found")
-    verified, _pending = _fixer_counts(db, user_id)
-    u.rewards_paid = verified // REWARD_EVERY
+def _csv_in(raw: str | list[str] | None, allowed: set[str]) -> list[str]:
+    items = raw if isinstance(raw, list) else (raw or "").split(",")
+    return sorted({x.strip() for x in items if x.strip() in allowed})
+
+
+def _decide(res: dict, claimed: list[str]) -> tuple[str, str | None, list[str]]:
+    """(status, verified_by, verified skills) from the AI's reading of the document."""
+    if not res.get("available"):
+        return "pending", None, []
+    shown = [x for x in res["skills_shown"] if x in claimed]
+    if res["verdict"] in ("fake", "not_a_document") and res["confidence"] >= 60:
+        return "rejected", None, []
+    if (_mj_auto() and res["verdict"] == "legit" and res["name_matches"] and res["looks_genuine"]
+            and res["confidence"] >= MJ_AUTO_MIN and shown):
+        return "approved", "ai", shown
+    return "pending", None, []
+
+
+def _mj_admin(m: Mjeshter) -> schemas.MjeshterAdmin:
+    o = schemas.MjeshterAdmin.model_validate(m)
+    o.user_name, o.user_email = m.user.name, m.user.email
+    return o
+
+
+@app.post("/mjeshtrit/apply", response_model=schemas.MjeshterMe, tags=["mjeshtrit"])
+async def mjeshter_apply(
+    skills: str = Form(..., description="comma list: plumbing, electrics, building, painting, carpentry, gardening, welding"),
+    days: str = Form("", description="comma list: weekday_evenings, saturday, sunday, holidays"),
+    neighbourhood: str | None = Form(None, max_length=60),
+    bio: str | None = Form(None, max_length=500),
+    lang: str = Form("en"),
+    proof: UploadFile = File(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Sign up as a mjeshtër with proof of the skill (photo or PDF of a diploma, certificate, licence...).
+    The AI checks the document right away: genuine ones are approved, unclear ones wait for the city."""
+    if user.role != "citizen":
+        raise HTTPException(403, "Only residents can become a mjeshtër")
+    claimed = _csv_in(skills, SKILLS)
+    if not claimed:
+        raise HTTPException(400, "Pick at least one skill")
+    if neighbourhood and neighbourhood not in NEIGHBOURHOODS:
+        raise HTTPException(400, "Unknown neighbourhood")
+    data = await proof.read()
+    if len(data) > MAX_PHOTO_BYTES:
+        raise HTTPException(413, "The document is larger than 10 MB")
+    mime = (proof.content_type or "").lower()
+    if mime not in ai.PROOF_MIME:
+        mime = "application/pdf" if data[:4] == b"%PDF" else "image/jpeg"
+    PROOFS.mkdir(parents=True, exist_ok=True)
+    name = f"{uuid.uuid4().hex}{'.pdf' if mime == 'application/pdf' else '.jpg'}"
+    (PROOFS / name).write_bytes(data)
+
+    res = await ai.check_proof(data, mime, user.name, claimed, lang)
+    status_, by, verified = _decide(res, claimed)
+    m = db.scalar(select(Mjeshter).where(Mjeshter.user_id == user.id))
+    if m and m.status == "approved" and status_ != "approved":
+        raise HTTPException(409, "You're already a verified mjeshtër")
+    if m is None:
+        m = Mjeshter(user_id=user.id, skills="")
+        db.add(m)
+    old = m.proof_path
+    m.skills, m.days = ",".join(claimed), ",".join(_csv_in(days, DAYS))
+    m.neighbourhood, m.bio = neighbourhood or user.neighbourhood, (bio or "").strip() or None
+    m.status, m.verified_by, m.verified_skills = status_, by, ",".join(verified) or None
+    m.proof_path, m.proof_mime = name, mime
+    m.ai_verdict = res.get("verdict") if res.get("available") else "unavailable"
+    m.ai_doc_type, m.ai_name_on_doc, m.ai_issuer = res.get("doc_type"), res.get("name_on_doc"), res.get("issuer")
+    m.ai_name_matches = int(res["name_matches"]) if res.get("available") else None
+    m.ai_looks_genuine = int(res["looks_genuine"]) if res.get("available") else None
+    m.ai_skills = ",".join(res.get("skills_shown") or []) or None
+    m.ai_confidence, m.ai_reason, m.ai_reason_user = res.get("confidence"), res.get("reason"), res.get("reason_user")
+    m.admin_note, m.created_at = None, now()
+    m.reviewed_at = now() if status_ != "pending" else None
     db.commit()
-    for x in _rewards(db):
-        if x.user_id == user_id:
-            return x
-    raise HTTPException(404, "No verified fixes for this user")
+    if old and old != name:
+        (PROOFS / old).unlink(missing_ok=True)
+    return schemas.MjeshterMe.model_validate(m)
+
+
+@app.get("/mjeshtrit/me", response_model=schemas.MjeshterMe | None, tags=["mjeshtrit"])
+def mjeshter_me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    m = db.scalar(select(Mjeshter).where(Mjeshter.user_id == user.id))
+    return schemas.MjeshterMe.model_validate(m) if m else None
+
+
+@app.put("/mjeshtrit/me", response_model=schemas.MjeshterMe, tags=["mjeshtrit"])
+def mjeshter_edit(body: schemas.MjeshterEdit, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Change the days you're free, your area or your bio. New skills need a new document."""
+    m = db.scalar(select(Mjeshter).where(Mjeshter.user_id == user.id))
+    if not m:
+        raise HTTPException(404, "You haven't signed up as a mjeshtër")
+    if body.neighbourhood and body.neighbourhood not in NEIGHBOURHOODS:
+        raise HTTPException(400, "Unknown neighbourhood")
+    m.days = ",".join(_csv_in(body.days, DAYS))
+    m.neighbourhood = body.neighbourhood or m.neighbourhood
+    m.bio = (body.bio or "").strip() or None
+    db.commit()
+    return schemas.MjeshterMe.model_validate(m)
+
+
+@app.delete("/mjeshtrit/me", status_code=204, tags=["mjeshtrit"])
+def mjeshter_leave(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    m = db.scalar(select(Mjeshter).where(Mjeshter.user_id == user.id))
+    if m:
+        if m.proof_path:
+            (PROOFS / m.proof_path).unlink(missing_ok=True)
+        db.delete(m)
+        db.commit()
+
+
+@app.get("/mjeshtrit", response_model=list[schemas.MjeshterPublic], tags=["mjeshtrit"])
+def mjeshtrit_list(
+    skill: str | None = None, day: str | None = None,
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+):
+    """Verified mjeshtrit, people from your neighbourhood first, then by jobs done."""
+    rows = db.scalars(select(Mjeshter).options(selectinload(Mjeshter.user)).where(Mjeshter.status == "approved")).all()
+    result = []
+    for m in rows:
+        sk = [x for x in (m.verified_skills or "").split(",") if x]
+        dd = [x for x in (m.days or "").split(",") if x]
+        if (skill and skill not in sk) or (day and day not in dd):
+            continue
+        done, _pending = _fixer_counts(db, m.user_id)
+        parts = m.user.name.split()
+        short = parts[0] + (f" {parts[-1][0]}." if len(parts) > 1 else "")
+        result.append(schemas.MjeshterPublic(
+            id=m.id, name=short, skills=sk, days=dd, neighbourhood=m.neighbourhood, bio=m.bio,
+            verified_by=m.verified_by, jobs_done=done, level=level(done)[0],
+        ))
+    return sorted(result, key=lambda x: (x.neighbourhood != user.neighbourhood, -x.jobs_done, x.name))
+
+
+def _mjeshtrit_for(db: Session, need: str, area: str | None, skip_user: int | None = None) -> list[tuple[Mjeshter, User]]:
+    rows = db.scalars(select(Mjeshter).options(selectinload(Mjeshter.user)).where(Mjeshter.status == "approved")).all()
+    picked = [(m, m.user) for m in rows if can_do([x for x in (m.verified_skills or "").split(",") if x], need)
+              and m.user_id != skip_user]
+    return sorted(picked, key=lambda mu: mu[0].neighbourhood != area)
+
+
+async def alert_mjeshtrit(report_id: int) -> None:
+    """A new skilled job: tell the mjeshtrit with that skill in the same neighbourhood."""
+    with SessionLocal() as db:
+        r = db.get(Report, report_id)
+        need = skill_job(r) if r else None
+        if not need or r.status != "reported":
+            return
+        area = neighbourhood(r.latitude, r.longitude)
+        tokens = [u.push_token for m, u in _mjeshtrit_for(db, need, area, r.user_id)
+                  if u.push_token and area and (m.neighbourhood == area or u.neighbourhood == area)]
+        cat = r.category.name.lower()
+    if tokens:
+        await send_many(tokens, "🔧 A job for a mjeshtër", f"A {cat} in {area} needs {need if need != 'any' else 'a skilled hand'}.",
+                        {"reportId": report_id})
+
+
+@app.post("/reports/{report_id}/ask-mjeshter", response_model=schemas.AskOut, tags=["mjeshtrit"])
+async def ask_mjeshter(report_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """"Ask a mjeshtër": push the job to verified volunteers with the right skill (own area first)."""
+    r = _report_full(db, report_id)
+    need = skill_job(r)
+    if not need:
+        raise HTTPException(400, "This job isn't one for a mjeshtër")
+    if r.status != "reported" or r.claimed_by:
+        raise HTTPException(409, "Someone is already working on this")
+    if r.mjeshter_asked_at and now() - r.mjeshter_asked_at < timedelta(hours=1):
+        raise HTTPException(429, "A mjeshtër was already asked in the last hour")
+    area = neighbourhood(r.latitude, r.longitude)
+    found = _mjeshtrit_for(db, need, area, user.id)[:50]
+    tokens = [u.push_token for _m, u in found if u.push_token]
+    r.mjeshter_asked_at = now()
+    db.commit()
+    if tokens:
+        await send_many(tokens, "🔧 Can you help?",
+                        f"{user.name.split(' ')[0]} is asking a mjeshtër to fix a {r.category.name.lower()}"
+                        + (f" in {area}" if area else "") + ".", {"reportId": r.id})
+    return schemas.AskOut(notified=len(found))
+
+
+@app.get("/admin/mjeshtrit", response_model=list[schemas.MjeshterAdmin], tags=["admin"])
+def admin_mjeshtrit(_: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Everyone who applied, waiting ones first."""
+    rows = db.scalars(select(Mjeshter).options(selectinload(Mjeshter.user))).all()
+    order = {"pending": 0, "rejected": 1, "approved": 2}
+    return [_mj_admin(m) for m in sorted(rows, key=lambda m: (order.get(m.status, 3), -m.created_at.timestamp()))]
+
+
+@app.get("/admin/mjeshtrit/{mj_id}/proof", tags=["admin"])
+def admin_mjeshter_proof(mj_id: int, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """The uploaded document (only for city staff)."""
+    m = db.get(Mjeshter, mj_id)
+    if not m or not m.proof_path or not (PROOFS / m.proof_path).exists():
+        raise HTTPException(404, "No document")
+    return FileResponse(PROOFS / m.proof_path, media_type=m.proof_mime or "application/octet-stream",
+                        headers={"Cache-Control": "no-store"})
+
+
+async def _mj_decide(db: Session, mj_id: int, approve: bool, note: str | None) -> schemas.MjeshterAdmin:
+    m = db.get(Mjeshter, mj_id)
+    if not m:
+        raise HTTPException(404, "Not found")
+    m.status = "approved" if approve else "rejected"
+    m.verified_by = "admin" if approve else None
+    m.verified_skills = m.skills if approve else None
+    m.admin_note, m.reviewed_at = (note or "").strip() or None, now()
+    db.commit()
+    token = m.user.push_token
+    if token:
+        await send_many([token], "You're a verified mjeshtër ✓" if approve else "About your mjeshtër sign-up",
+                        "You can now take skilled jobs and help your neighbourhood." if approve
+                        else (m.admin_note or "The city couldn't verify your document. You can send another one."),
+                        {"screen": "mjeshtrit"})
+    return _mj_admin(m)
+
+
+@app.post("/admin/mjeshtrit/{mj_id}/approve", response_model=schemas.MjeshterAdmin, tags=["admin"])
+async def admin_mjeshter_approve(mj_id: int, body: schemas.NoteIn | None = None, _: User = Depends(admin_user),
+                                 db: Session = Depends(get_db)):
+    return await _mj_decide(db, mj_id, True, body.note if body else None)
+
+
+@app.post("/admin/mjeshtrit/{mj_id}/reject", response_model=schemas.MjeshterAdmin, tags=["admin"])
+async def admin_mjeshter_reject(mj_id: int, body: schemas.NoteIn | None = None, _: User = Depends(admin_user),
+                                db: Session = Depends(get_db)):
+    return await _mj_decide(db, mj_id, False, body.note if body else None)
+
+
+# ---------- partner rewards ----------
+# Partner brands (a restaurant, a cinema, a café) give rewards. Admins add them here; a fixer spends
+# badges on one and gets a voucher code to show at the partner. No money moves through MendMap.
+VOUCHER_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I to misread
+
+
+def _spent(db: Session, user_id: int) -> int:
+    return db.scalar(select(func.coalesce(func.sum(RewardClaim.cost), 0)).where(RewardClaim.user_id == user_id)) or 0
+
+
+def _claimed_counts(db: Session) -> dict[int, int]:
+    return dict(db.execute(select(RewardClaim.reward_id, func.count()).group_by(RewardClaim.reward_id)).all())
+
+
+def _partner_out(r: PartnerReward, claimed: int = 0) -> schemas.PartnerOut:
+    return schemas.PartnerOut(id=r.id, partner=r.partner, title=r.title, details=r.details, emoji=r.emoji or "🎁",
+                              cost=r.cost, stock=r.stock, active=bool(r.active), claimed=claimed)
+
+
+def _claim_out(c: RewardClaim, with_user: bool = False) -> schemas.ClaimOut:
+    return schemas.ClaimOut(
+        id=c.id, code=c.code, reward_id=c.reward_id, partner=c.reward.partner, title=c.reward.title,
+        emoji=c.reward.emoji or "🎁", cost=c.cost, used=bool(c.used), created_at=c.created_at, used_at=c.used_at,
+        user_name=c.user.name if with_user else None, user_email=c.user.email if with_user else None,
+    )
+
+
+def _offered(db: Session) -> list[PartnerReward]:
+    """Rewards a fixer can see: switched on and not sold out, cheapest first."""
+    rows = db.scalars(select(PartnerReward).where(PartnerReward.active == 1).order_by(PartnerReward.cost, PartnerReward.id))
+    return [r for r in rows if r.stock is None or r.stock > 0]
+
+
+def _next_reward(db: Session, balance: int) -> schemas.PartnerOut | None:
+    offered = _offered(db)
+    if not offered:
+        return None
+    goal = next((r for r in offered if r.cost > balance), None) or offered[-1]
+    return _partner_out(goal)
+
+
+@app.get("/rewards", response_model=schemas.RewardsOut, tags=["rewards"])
+def list_rewards(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Partner rewards on offer, the user's badge balance and their vouchers."""
+    verified, _pending = _fixer_counts(db, user.id)
+    spent = _spent(db, user.id)
+    counts = _claimed_counts(db)
+    claims = db.scalars(select(RewardClaim).options(selectinload(RewardClaim.reward))
+                        .where(RewardClaim.user_id == user.id).order_by(RewardClaim.created_at.desc())).all()
+    return schemas.RewardsOut(
+        badges=verified, spent=spent, balance=max(0, verified - spent),
+        rewards=[_partner_out(r, counts.get(r.id, 0)) for r in _offered(db)],
+        claims=[_claim_out(c) for c in claims],
+    )
+
+
+@app.post("/rewards/{reward_id}/claim", response_model=schemas.ClaimOut, status_code=201, tags=["rewards"])
+def claim_reward(reward_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Spend badges on a partner reward and get a voucher code."""
+    if user.role != "citizen":
+        raise HTTPException(403, "Only residents can get rewards")
+    r = db.get(PartnerReward, reward_id)
+    if not r or not r.active:
+        raise HTTPException(404, "This reward is no longer on offer")
+    if r.stock is not None and r.stock <= 0:
+        raise HTTPException(409, "This reward is sold out")
+    verified, _pending = _fixer_counts(db, user.id)
+    if verified - _spent(db, user.id) < r.cost:
+        raise HTTPException(400, "Not enough badges for this reward yet")
+    code = "MM-" + "".join(secrets.choice(VOUCHER_ALPHABET) for _ in range(6))
+    while db.scalar(select(RewardClaim.id).where(RewardClaim.code == code)):
+        code = "MM-" + "".join(secrets.choice(VOUCHER_ALPHABET) for _ in range(6))
+    if r.stock is not None:
+        r.stock -= 1
+    c = RewardClaim(reward=r, user=user, code=code, cost=r.cost)
+    db.add(c)
+    db.commit()
+    return _claim_out(c)
+
+
+@app.get("/admin/partners", response_model=list[schemas.PartnerOut], tags=["admin"])
+def admin_partners(_: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Every partner reward, including hidden and sold-out ones."""
+    counts = _claimed_counts(db)
+    rows = db.scalars(select(PartnerReward).order_by(PartnerReward.active.desc(), PartnerReward.cost)).all()
+    return [_partner_out(r, counts.get(r.id, 0)) for r in rows]
+
+
+@app.post("/admin/partners", response_model=schemas.PartnerOut, status_code=201, tags=["admin"])
+async def add_partner(body: schemas.PartnerIn, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    r = PartnerReward(**body.model_dump(exclude={"active"}), active=int(body.active))
+    db.add(r)
+    db.commit()
+    if body.active:
+        tokens = list(db.scalars(select(User.push_token).where(User.role == "citizen", User.push_token.is_not(None))))
+        if tokens:
+            await send_many(tokens, f"New reward {r.emoji} {r.partner}",
+                            f"{r.title} for {r.cost} fixer badges. Fix things nearby to earn it!", {"screen": "rewards"})
+    return _partner_out(r)
+
+
+@app.put("/admin/partners/{reward_id}", response_model=schemas.PartnerOut, tags=["admin"])
+def edit_partner(reward_id: int, body: schemas.PartnerIn, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    r = db.get(PartnerReward, reward_id)
+    if not r:
+        raise HTTPException(404, "Reward not found")
+    for k, v in body.model_dump(exclude={"active"}).items():
+        setattr(r, k, v)
+    r.active = int(body.active)
+    db.commit()
+    return _partner_out(r, _claimed_counts(db).get(r.id, 0))
+
+
+@app.delete("/admin/partners/{reward_id}", status_code=204, tags=["admin"])
+def delete_partner(reward_id: int, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Delete a reward. One that vouchers were already given for is hidden instead, so those vouchers stay valid."""
+    r = db.get(PartnerReward, reward_id)
+    if not r:
+        raise HTTPException(404, "Reward not found")
+    if db.scalar(select(RewardClaim.id).where(RewardClaim.reward_id == reward_id).limit(1)):
+        r.active = 0
+    else:
+        db.delete(r)
+    db.commit()
+
+
+@app.get("/admin/reward-claims", response_model=list[schemas.ClaimOut], tags=["admin"])
+def admin_claims(_: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Vouchers given out, newest first."""
+    rows = db.scalars(select(RewardClaim).options(selectinload(RewardClaim.reward), selectinload(RewardClaim.user))
+                      .order_by(RewardClaim.used, RewardClaim.created_at.desc())).all()
+    return [_claim_out(c, with_user=True) for c in rows]
+
+
+@app.post("/admin/reward-claims/{claim_id}/used", response_model=schemas.ClaimOut, tags=["admin"])
+def claim_used(claim_id: int, _: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Record that the partner took the voucher, so it can't be used twice."""
+    c = db.get(RewardClaim, claim_id)
+    if not c:
+        raise HTTPException(404, "Voucher not found")
+    if not c.used:
+        c.used, c.used_at = 1, now()
+        db.commit()
+    return _claim_out(c, with_user=True)
 
 
 # Mounted last so the /admin/... API routes above take priority over the static panel.

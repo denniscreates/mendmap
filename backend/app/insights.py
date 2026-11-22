@@ -89,8 +89,6 @@ def priority(r: Report, at: datetime | None = None) -> tuple[int, list[str]]:
 # Potholes and streetlights need the city's tools and electrical work, so they stay with the crew.
 NEIGHBOUR_FIXABLE = {"dumping", "accessibility", "other"}
 MAX_ACTIVE_CLAIMS = 3
-REWARD_EVERY = 20  # verified fixes (fixer badges) per reward
-REWARD_EUR = 10
 CLAIM_HOURS = 48  # a taken job goes back to the map if no after photo arrives in time
 
 # Fixer levels by verified fixes (badges): (minimum badges, key)
@@ -127,11 +125,23 @@ def neighbour_ok(r: Report) -> bool:
     return bool(r.category and r.category.icon in NEIGHBOUR_FIXABLE)
 
 
+def skill_job(r: Report) -> str | None:
+    """A job for a skilled volunteer (mjeshtër): the skill it needs ("any" if the AI didn't say), or None."""
+    if is_flagged(r) or neighbour_ok(r) or not r.ai_skilled_ok or r.ai_is_problem == 0:
+        return None
+    return r.ai_skill_needed or "any"
+
+
+def can_do(skills: list[str], need: str | None) -> bool:
+    return bool(need) and bool(skills) and (need == "any" or need in skills)
+
+
 def enrich(out, r: Report):
     """Fills the computed fields of a ReportOut/ReportDetail."""
     out.priority, out.priority_reasons = priority(r)
     out.neighbourhood = neighbourhood(r.latitude, r.longitude)
     out.neighbour_fixable = neighbour_ok(r)
+    out.skill_needed = skill_job(r)
     out.flagged = is_flagged(r)
     out.ai_flags = [f.split(":")[0] for f in flag_list(r)]
     reused = next((f for f in flag_list(r) if f.startswith("reused_photo:")), None)

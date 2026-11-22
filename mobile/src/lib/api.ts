@@ -43,6 +43,8 @@ export type User = {
   home_lat?: number | null;
   home_lng?: number | null;
   neighbourhood?: string | null;
+  mjeshter_status?: "pending" | "approved" | "rejected" | null;
+  mjeshter_skills?: string[]; // verified skills (only when approved)
 };
 export type Category = { id: number; name: string; icon: string };
 export type StatusUpdate = { id: number; old_status: Status | null; new_status: Status; comment: string | null; created_at: string };
@@ -51,6 +53,8 @@ export type Report = {
   user_id: number;
   category: Category;
   description: string | null;
+  address?: string | null;
+  repeat_of?: number | null;
   photo_url: string | null;
   latitude: number;
   longitude: number;
@@ -86,24 +90,76 @@ export type Report = {
   flagged?: boolean;
   fix_ai?: string | null; // auto_verified, looks_fixed, not_fixed, different_place, fake
   fix_ai_reason?: string | null;
+  ai_description?: string | null;
+  blurred?: number | null; // faces and number plates blurred for privacy
+  rating?: number | null; // 1 = I confirmed the fix
+  reopened?: number;
+  skill_needed?: string | null; // a job for a mjeshtër: plumbing, painting... or "any"
+};
+export type MjeshterMe = {
+  status: "pending" | "approved" | "rejected";
+  skills: string[];
+  verified_skills: string[];
+  days: string[];
+  neighbourhood: string | null;
+  bio: string | null;
+  verified_by: "ai" | "admin" | null;
+  ai_verdict: string | null;
+  ai_reason_user: string | null;
+  admin_note: string | null;
+  created_at: string;
+};
+export type MjeshterPublic = {
+  id: number;
+  name: string;
+  skills: string[];
+  days: string[];
+  neighbourhood: string | null;
+  bio: string | null;
+  verified_by: "ai" | "admin" | null;
+  jobs_done: number;
+  level: string;
 };
 export type Fixer = {
   neighbourhood: string | null;
   verified: number;
   pending: number;
   active: Report[];
-  goal: number;
-  reward_eur: number;
-  rewards_earned: number;
-  rewards_paid: number;
+  balance: number; // badges not spent yet
+  spent: number;
+  next_reward: PartnerReward | null;
   level: string;
   next_level_at: number | null;
   claim_hours: number;
   max_active: number;
   available: Report[];
 };
+export type PartnerReward = {
+  id: number;
+  partner: string;
+  title: string;
+  details: string | null;
+  emoji: string;
+  cost: number; // badges
+  stock: number | null; // vouchers left, null = no limit
+  active: boolean;
+  claimed: number;
+};
+export type RewardClaim = {
+  id: number;
+  code: string;
+  reward_id: number;
+  partner: string;
+  title: string;
+  emoji: string;
+  cost: number;
+  used: boolean;
+  created_at: string;
+  used_at: string | null;
+};
+export type Rewards = { badges: number; spent: number; balance: number; rewards: PartnerReward[]; claims: RewardClaim[] };
 export type TopFixer = { name: string; neighbourhood: string | null; badges: number; level: string };
-export type ReportDetail = Report & { updates: StatusUpdate[]; reporter_name: string | null };
+export type ReportDetail = Report & { updates: StatusUpdate[]; reporter_name: string | null; adopted_by?: string[] };
 export type Job = Report & { stop: number; leg_m: number | null };
 export type PhotoCheck = {
   available: boolean;
@@ -115,6 +171,8 @@ export type PhotoCheck = {
   safety_reason?: string | null;
   photo_kind?: string | null;
   kind_reason?: string | null;
+  description?: string | null; // the AI's description of the photo, in the app's language
+  blur_boxes?: { kind: "face" | "plate"; box: number[] }[];
 };
 export type CrewStats = {
   open_jobs: number;
@@ -131,7 +189,10 @@ export type PublicStats = {
   fixed: number;
   avg_days_to_fix: number | null;
   fix_rate: number;
-  neighbourhoods: { name: string; total: number; fixed: number; open: number; fix_rate: number }[];
+  neighbourhoods: {
+    name: string; total: number; fixed: number; open: number; fix_rate: number;
+    avg_fix_days?: number | null; fixed_in_week?: number | null; came_back?: number;
+  }[];
 };
 
 /** React Native's FormData takes { uri, name, type } objects as file parts. */
@@ -196,6 +257,62 @@ function xhrSend(url: string, method: string, headers: Record<string, string>, b
   });
 }
 
+export type CleanupEvent = {
+  id: number;
+  room: string;
+  title: string;
+  details: string | null;
+  starts_at: string;
+  place: string;
+  latitude: number | null;
+  longitude: number | null;
+  organiser_id: number;
+  organiser_name: string;
+  going: number;
+  me_going: boolean;
+  mine: boolean;
+  cancelled: boolean;
+  done: boolean;
+  past: boolean;
+  people: { user_id: number; name: string; attended: boolean }[];
+};
+export type NewEvent = { room: string; title: string; details?: string; starts_at: string; place: string; latitude?: number; longitude?: number };
+export type Adoption = { id: number; street: string; sponsor: string | null; open: number; created_at: string };
+export type TopReport = {
+  id: number; title: string; address: string | null; neighbourhood: string | null; status: Status;
+  confirmations: number; photo_url: string | null; created_at: string;
+};
+
+/** A street or place suggestion for the report location. */
+export type Place = { name: string; detail: string | null; kind: "street" | "place"; latitude: number; longitude: number };
+
+// ---------- community chat ----------
+export type ChatEvent = { id: number; title: string; starts_at: string; place: string; going: number; me_going: boolean; cancelled: boolean };
+export type ChatMessage = {
+  id: number;
+  room: string;
+  kind: "message" | "announcement" | "event";
+  event: ChatEvent | null;
+  text: string;
+  user_id: number;
+  user_name: string;
+  badge: "city" | "mjeshter" | null;
+  report: { id: number; title: string; status: Status; photo_url: string | null } | null;
+  created_at: string;
+  mine: boolean;
+};
+export type ChatRoom = {
+  id: string;
+  name: string;
+  mine: boolean;
+  last_id: number | null;
+  last_text: string | null;
+  last_name: string | null;
+  last_at: string | null;
+  today: number;
+};
+const room = (r: string) => `/chat/rooms/${encodeURIComponent(r)}`;
+
 // ---------- endpoints ----------
 type Auth = { token: string; user: User; is_new: boolean };
 export type OtpSent = { sent: boolean; expires_in: number; resend_in: number; existing: boolean; demo_code: string | null };
@@ -222,6 +339,64 @@ export const api = {
   },
   fixer: () => request<Fixer>("/me/fixer"),
   topFixers: () => request<TopFixer[]>("/public/fixers"),
+  // Mjeshtrit: skilled volunteers
+  mjeshtrit: (skill?: string | null, day?: string | null) => {
+    const p = new URLSearchParams();
+    if (skill) p.set("skill", skill);
+    if (day) p.set("day", day);
+    return request<MjeshterPublic[]>(`/mjeshtrit?${p}`);
+  },
+  mjeshterMe: () => request<MjeshterMe | null>("/mjeshtrit/me"),
+  /** Sign up with proof of the skill; the AI checks the document before this returns. */
+  mjeshterApply: (a: {
+    skills: string[]; days: string[]; neighbourhood: string | null; bio: string;
+    proof: { uri: string; name: string; mime: string }; lang: string;
+  }) => {
+    const form = new FormData();
+    form.append("skills", a.skills.join(","));
+    form.append("days", a.days.join(","));
+    if (a.neighbourhood) form.append("neighbourhood", a.neighbourhood);
+    if (a.bio) form.append("bio", a.bio);
+    form.append("lang", a.lang);
+    form.append("proof", { uri: a.proof.uri, name: a.proof.name, type: a.proof.mime } as unknown as Blob);
+    return request<MjeshterMe>("/mjeshtrit/apply", { method: "POST", body: form });
+  },
+  askMjeshter: (id: number) => request<{ notified: number }>(`/reports/${id}/ask-mjeshter`, { method: "POST" }),
+  // Partner rewards, paid for with fixer badges
+  searchStreets: (q: string) => request<Place[]>(`/geo/search?q=${encodeURIComponent(q)}`),
+  chatTranslate: (id: number, lang: string) =>
+    request<{ text: string }>(`/chat/messages/${id}/translate`, { method: "POST", body: JSON.stringify({ lang }) }),
+  events: (room?: string | null, past = false) => {
+    const p = new URLSearchParams();
+    if (room) p.set("room", room);
+    if (past) p.set("past", "true");
+    return request<CleanupEvent[]>(`/events${p.size ? `?${p}` : ""}`);
+  },
+  event: (id: number) => request<CleanupEvent>(`/events/${id}`),
+  createEvent: (e: NewEvent) => request<CleanupEvent>("/events", { method: "POST", body: JSON.stringify(e) }),
+  rsvp: (id: number, going: boolean) => request<CleanupEvent>(`/events/${id}/rsvp`, { method: going ? "POST" : "DELETE" }),
+  attendance: (id: number, userIds: number[]) =>
+    request<CleanupEvent>(`/events/${id}/attendance`, { method: "POST", body: JSON.stringify({ user_ids: userIds }) }),
+  cancelEvent: (id: number) => request<CleanupEvent>(`/events/${id}`, { method: "DELETE" }),
+  myStreets: () => request<Adoption[]>("/adoptions/me"),
+  adopt: (street: string, sponsor?: string | null) =>
+    request<Adoption>("/adoptions", { method: "POST", body: JSON.stringify({ street, sponsor: sponsor || null }) }),
+  unadopt: (id: number) => request<null>(`/adoptions/${id}`, { method: "DELETE" }),
+  top10: () => request<TopReport[]>("/public/top?days=30"),
+  chatRooms: () => request<ChatRoom[]>("/chat/rooms"),
+  chatMessages: (r: string, q: { after?: number; before?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (q.after != null) p.set("after", String(q.after));
+    if (q.before != null) p.set("before", String(q.before));
+    return request<ChatMessage[]>(`${room(r)}/messages${p.size ? `?${p}` : ""}`);
+  },
+  chatHidden: (r: string, after: number) => request<number[]>(`${room(r)}/hidden?after=${after}`),
+  chatSend: (r: string, text: string, lang: string, reportId?: number | null) =>
+    request<ChatMessage>(`${room(r)}/messages`, { method: "POST", body: JSON.stringify({ text, lang, report_id: reportId ?? null }) }),
+  chatFlag: (id: number) => request<{ flags: number; hidden: boolean }>(`/chat/messages/${id}/flag`, { method: "POST" }),
+  chatDelete: (id: number) => request<null>(`/chat/messages/${id}`, { method: "DELETE" }),
+  rewards: () => request<Rewards>("/rewards"),
+  claimReward: (id: number) => request<RewardClaim>(`/rewards/${id}/claim`, { method: "POST" }),
   login: (email: string, password: string) =>
     request<Auth>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   me: () => request<User>("/me"),
@@ -238,6 +413,9 @@ export const api = {
   },
   report: (id: number) => request<ReportDetail>(`/reports/${id}`),
   confirm: (id: number) => request<Report>(`/reports/${id}/confirm`, { method: "POST" }),
+  /** The reporter says whether it's really fixed; "not fixed" reopens it. */
+  rateFix: (id: number, ok: boolean, comment?: string) =>
+    request<ReportDetail>(`/reports/${id}/rate`, { method: "POST", body: JSON.stringify({ ok, comment }) }),
   myReports: () => request<ReportDetail[]>("/me/reports"),
   createReport: (r: NewReport) => {
     const form = new FormData();
@@ -245,15 +423,17 @@ export const api = {
     form.append("latitude", String(r.latitude));
     form.append("longitude", String(r.longitude));
     if (r.description) form.append("description", r.description);
+    if (r.address) form.append("address", r.address);
     if (r.severity) form.append("severity", String(r.severity));
     if (r.photoUri) form.append("photo", filePart(r.photoUri, "photo.jpg", imageType(r.photoUri)));
     if (r.voiceUri) form.append("voice", filePart(r.voiceUri, "voice.m4a", "audio/m4a"));
     return request<Report>("/reports", { method: "POST", body: form });
   },
   /** AI photo check: suggested category and severity. { available: false } when the server has no AI key. */
-  checkPhoto: (uri: string) => {
+  checkPhoto: (uri: string, lang = "en") => {
     const form = new FormData();
     form.append("photo", filePart(uri, "photo.jpg", imageType(uri)));
+    form.append("lang", lang);
     return request<PhotoCheck>("/ai/check-photo", { method: "POST", body: form });
   },
   setHome: (coords: { latitude: number; longitude: number } | null) =>
@@ -280,6 +460,7 @@ export type NewReport = {
   latitude: number;
   longitude: number;
   description?: string;
+  address?: string;
   photoUri?: string | null;
   voiceUri?: string | null;
   severity?: number | null;

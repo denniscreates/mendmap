@@ -69,7 +69,8 @@ export default function FixScreen() {
     ]);
 
   const full = !!fixer && fixer.active.length >= fixer.max_active;
-  const inGoal = fixer ? fixer.verified % fixer.goal : 0;
+  const goal = fixer?.next_reward ?? null;
+  const ready = !!goal && fixer!.balance >= goal.cost;
 
   return (
     <ScrollView
@@ -98,14 +99,24 @@ export default function FixScreen() {
               <T style={s.heroText}>{t("badgesShort")}</T>
             </View>
           </View>
-          <View style={s.meter}>
-            <View style={[s.meterFill, { width: `${(inGoal / fixer.goal) * 100}%` }]} />
-          </View>
-          <T style={s.heroText}>{t("fixerProgress", { n: inGoal, goal: fixer.goal, eur: fixer.reward_eur })}</T>
-          {fixer.pending > 0 && <T style={s.heroText}>⏳ {t("fixerPending", { n: fixer.pending })}</T>}
-          {fixer.rewards_earned > fixer.rewards_paid && (
-            <T medium style={s.heroText}>💶 {t("rewardOwed", { e: `€${(fixer.rewards_earned - fixer.rewards_paid) * fixer.reward_eur}` })}</T>
+          {goal && (
+            <>
+              <View style={s.meter}>
+                <View style={[s.meterFill, { width: `${Math.min(100, (fixer.balance / goal.cost) * 100)}%` }]} />
+              </View>
+              <T style={s.heroText}>
+                {goal.emoji}{" "}
+                {ready
+                  ? t("rewardReady", { title: goal.title, partner: goal.partner })
+                  : t("nextRewardProgress", { n: fixer.balance, cost: goal.cost, title: goal.title, partner: goal.partner })}
+              </T>
+            </>
           )}
+          {fixer.pending > 0 && <T style={s.heroText}>⏳ {t("fixerPending", { n: fixer.pending })}</T>}
+          <Pressable onPress={() => router.push("/rewards")} style={({ pressed }) => [s.rewardsBtn, pressed && { opacity: 0.7 }]}>
+            <T medium style={{ color: colors.blue }}>🎁 {t("seeRewards")}</T>
+            <Ionicons name="chevron-forward" size={16} color={colors.blue} />
+          </Pressable>
         </Animated.View>
       )}
 
@@ -186,13 +197,25 @@ export default function FixScreen() {
         </View>
       )}
 
+      {/* Mjeshtrit: skilled volunteers */}
+      <Pressable onPress={() => router.push("/mjeshtrit")} style={({ pressed }) => [s.card, s.mjCard, pressed && { opacity: 0.7 }]}>
+        <T style={{ fontSize: 30 }}>🧰</T>
+        <View style={{ flex: 1, gap: 2 }}>
+          <T medium style={{ fontSize: 16 }}>{t("mjTitle")}</T>
+          <T style={s.muted}>
+            {user?.mjeshter_status === "approved" ? t("mjCardVerified") : t("mjCardBody")}
+          </T>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+      </Pressable>
+
       {/* How it works */}
       <View style={s.card}>
         <T medium style={{ fontSize: 16 }}>{t("howItWorks")}</T>
         {(["how1", "how2", "how3", "how4"] as const).map((k, i) => (
           <View key={k} style={s.howRow}>
             <View style={s.howNum}><T medium style={{ color: colors.onBlue, fontSize: 13 }}>{i + 1}</T></View>
-            <T style={{ flex: 1 }}>{t(k, { h: fixer?.claim_hours ?? 48, goal: fixer?.goal ?? 20, eur: fixer?.reward_eur ?? 10 })}</T>
+            <T style={{ flex: 1 }}>{t(k, { h: fixer?.claim_hours ?? 48 })}</T>
           </View>
         ))}
       </View>
@@ -238,6 +261,9 @@ const makeStyles = (c: Palette) =>
     heroTitle: { color: "#fff", fontSize: 20 },
     heroText: { color: "#fff", opacity: 0.9, fontSize: 14 },
     heroBig: { color: "#fff", fontSize: 30 },
+    mjCard: { flexDirection: "row", alignItems: "center", gap: 12 },
+    rewardsBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, paddingVertical: 10,
+      borderRadius: 12, backgroundColor: "#fff" },
     meter: { height: 10, borderRadius: 5, backgroundColor: "#ffffff33", overflow: "hidden" },
     meterFill: { height: "100%", borderRadius: 5, backgroundColor: c.orange },
     card: { padding: 14, gap: 10, borderRadius: 16, backgroundColor: c.surface, borderWidth: 1, borderColor: c.line },

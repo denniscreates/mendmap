@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500&display=swap" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="styles.css?v=7" />
+  <link rel="stylesheet" href="styles.css?v=11" />
 </head>
 <body>
   <!-- Login -->
@@ -39,7 +39,9 @@
         <button data-view="list" class="active">Reports</button>
         <button data-view="map">Map</button>
         <button data-view="stats">Statistics</button>
-        <button data-view="fixers">Neighbour fixes <span id="fix-badge" class="count-badge hidden"></span></button>
+        <button data-view="fixers">Fixes &amp; rewards <span id="fix-badge" class="count-badge hidden"></span></button>
+        <button data-view="mjeshtrit">Mjeshtri <span id="mj-badge" class="count-badge hidden"></span></button>
+        <button data-view="chat">Chat <span id="chat-badge" class="count-badge hidden"></span></button>
       </nav>
       <div class="me"><a class="btn ghost" href="/city/" target="_blank" rel="noopener" title="Public transparency page">Public page ↗</a><span id="me-name"></span><button type="button" class="btn ghost theme-btn" data-theme-toggle title="Light / dark">◐</button><button id="logout" class="btn ghost">Sign out</button></div>
     </header>
@@ -52,7 +54,9 @@
         <option value="in_progress">In progress</option>
         <option value="fixed">Fixed</option>
       </select>
-      <input id="f-search" type="search" placeholder="Search description or #id" />
+      <input id="f-search" type="search" placeholder="Search description, street or #id" />
+      <label class="check muted" title="Fake or reused photos, or not a street problem, not cleared yet"><input id="f-flagged" type="checkbox" /> ⚑ Flagged only</label>
+      <button id="review-all" class="btn ghost" title="Fingerprint every photo (finds reused ones) and run the AI check on reports not checked yet">✨ Check all with AI</button>
       <span id="count" class="muted"></span>
       <button id="refresh" class="btn ghost">↻ Refresh</button>
     </div>
@@ -77,22 +81,86 @@
       <div id="view-map" class="view hidden"><div id="map"></div></div>
       <div id="view-fixers" class="view hidden">
         <p class="muted">Residents can take safe jobs (illegal dumping, accessibility, other) in their own neighbourhood.
-          Check each “after” photo here. Every accepted fix is a fixer badge; every 20 badges earns a €10 reward,
-          paid by the city outside MendMap and recorded here.</p>
+          Check each “after” photo here. Every accepted fix is a fixer badge. Fixers spend badges on rewards from
+          partner brands below and get a voucher code to show at the partner.</p>
         <h3>Waiting for a check</h3>
         <div id="fix-pending" class="fix-list"></div>
-        <h3>Fixers and rewards</h3>
+        <h3>Partner rewards</h3>
+        <form id="partner-form" class="partner-form">
+          <input name="id" type="hidden" />
+          <label>Emoji<input name="emoji" value="🎁" maxlength="16" /></label>
+          <label>Partner<input name="partner" required maxlength="80" placeholder="e.g. Zhuzuff Kitchen" /></label>
+          <label>Reward<input name="title" required maxlength="120" placeholder="e.g. Free dinner for 2" /></label>
+          <label class="wide">Details<input name="details" maxlength="500" placeholder="How to use it, e.g. book a table and show the code" /></label>
+          <label>Badges<input name="cost" type="number" min="1" max="1000" value="20" required /></label>
+          <label>Vouchers left<input name="stock" type="number" min="0" placeholder="No limit" /></label>
+          <label class="check"><input name="active" type="checkbox" checked /> On offer</label>
+          <div class="partner-actions">
+            <button class="btn primary" type="submit" id="partner-save">Add reward</button>
+            <button class="btn ghost hidden" type="button" id="partner-cancel">Cancel</button>
+          </div>
+        </form>
         <table class="reports">
-          <thead><tr><th>Name</th><th>Neighbourhood</th><th>Accepted fixes</th><th>Rewards earned</th><th>Paid</th><th>Owed</th><th></th></tr></thead>
-          <tbody id="reward-rows"></tbody>
+          <thead><tr><th>Reward</th><th>Badges</th><th>Vouchers left</th><th>Given</th><th>Status</th><th></th></tr></thead>
+          <tbody id="partner-rows"></tbody>
         </table>
-        <p id="reward-empty" class="muted center hidden">No accepted neighbour fixes yet.</p>
+        <p id="partner-empty" class="muted center hidden">No partner rewards yet. Add the first one above.</p>
+        <h3>Vouchers given</h3>
+        <table class="reports">
+          <thead><tr><th>Code</th><th>Reward</th><th>Fixer</th><th>Date</th><th></th></tr></thead>
+          <tbody id="claim-rows"></tbody>
+        </table>
+        <p id="claim-empty" class="muted center hidden">No vouchers yet.</p>
+      </div>
+      <div id="view-mjeshtrit" class="view hidden">
+        <p class="muted">Mjeshtri: skilled volunteers (plumbers, painters, builders…) who fix things when the city doesn't work,
+          for example on Sundays. Each one uploads proof of their skill. The AI reads it: genuine documents are approved
+          automatically, fakes are rejected, and anything unclear waits here for you. Documents are private to city staff.</p>
+        <div id="mj-list" class="mj-list"></div>
+        <p id="mj-empty" class="muted center hidden">Nobody has signed up as a mjeshtër yet.</p>
       </div>
       <div id="view-stats" class="view hidden">
+        <div class="summary-card">
+          <div class="summary-head">
+            <h3>✨ Summary for the city team</h3>
+            <select id="sum-days"><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select>
+            <select id="sum-lang"><option value="en">English</option><option value="sq">Shqip</option></select>
+            <button id="sum-fresh" class="btn ghost" type="button">↻ Write again</button>
+            <button id="sum-email" class="btn ghost" type="button">✉ Email it to me</button>
+          </div>
+          <div id="summary"><p class="muted">Loading…</p></div>
+        </div>
         <div class="cards" id="stat-cards"></div>
         <h3>Reports per category</h3>
         <div id="stat-bars" class="bars"></div>
         <p class="muted legend"><i class="dot reported"></i>Reported <i class="dot in_progress"></i>In progress <i class="dot fixed"></i>Fixed</p>
+        <h3>How fast each neighbourhood gets fixed</h3>
+        <p class="muted">The same table is on the public page, so residents can see it too. “Came back” = reported again at a spot that was fixed in the last 90 days: the repair didn't hold.</p>
+        <table class="reports">
+          <thead><tr><th>Neighbourhood</th><th>Reports</th><th>Fixed</th><th>Avg. time to fix</th><th>Fixed within a week</th><th>Came back</th></tr></thead>
+          <tbody id="board-rows"></tbody>
+        </table>
+        <h3>Top 10 this month</h3>
+        <p class="muted">Open problems the most neighbours confirmed with “I see this too”.</p>
+        <ol id="top10" class="top10"></ol>
+      </div>
+      <div id="view-chat" class="view hidden">
+        <p class="muted">The community chat has one room for all of Prishtina and one per neighbourhood. The AI blocks insults,
+          spam and phone numbers before they're posted. Residents can report a message: it's hidden after 3 reports.
+          Check reported messages here, and post city announcements (road works, water cuts, clean-up times).</p>
+        <h3>📢 City announcement</h3>
+        <form id="ann-form" class="ann-form">
+          <div id="ann-rooms" class="ann-rooms"></div>
+          <textarea name="text" required maxlength="1000" placeholder="e.g. Water cut on Bill Klinton street tomorrow 9:00–12:00 for pipe repairs."></textarea>
+          <label class="check"><input name="push" type="checkbox" checked /> Also send a push notification to the residents</label>
+          <div><button class="btn primary" type="submit">Post announcement</button> <span id="ann-msg" class="muted"></span></div>
+        </form>
+        <div class="summary-head">
+          <h3>Reported messages</h3>
+          <label class="check muted"><input id="chat-all" type="checkbox" /> Show all recent messages</label>
+        </div>
+        <div id="chat-list" class="chat-list"></div>
+        <p id="chat-empty" class="muted center hidden">No reported messages. 🎉</p>
       </div>
     </main>
 
@@ -104,6 +172,6 @@
   </section>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>

@@ -153,7 +153,7 @@ export default function Login() {
                 onChange={setLang}
                 options={[
                   { value: "en", label: LANG_NAME.en },
-                  { value: localLang, label: LANG_NAME[localLang] },
+                  { value: localLang, label: (LANG_NAME[localLang] ?? localLang.toUpperCase()) },
                 ]}
               />
             </View>

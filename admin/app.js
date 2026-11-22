@@ -102,7 +102,9 @@ async function load() {
 function filtered() {
   const q = $("#f-search").value.trim().toLowerCase();
   let list = state.reports;
-  if (q) list = list.filter((r) => `#${r.id}` === q || String(r.id) === q || (r.description || "").toLowerCase().includes(q) || r.category.name.toLowerCase().includes(q));
+  if (q) list = list.filter((r) => `#${r.id}` === q || String(r.id) === q || (r.description || "").toLowerCase().includes(q)
+    || r.category.name.toLowerCase().includes(q) || (r.address || "").toLowerCase().includes(q));
+  if ($("#f-flagged").checked) list = list.filter((r) => r.flagged || r.fix_ai === "fake" || r.fix_ai === "suspicious");
   const { key, dir } = state.sort;
   const val = (r) => (key === "category" ? r.category.name : r[key]);
   return [...list].sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : 0) * (dir === "asc" ? 1 : -1));
@@ -116,6 +118,10 @@ function render() {
   if (state.view === "map") renderMap(list);
   if (state.view === "stats") renderStats();
   if (state.view === "fixers") renderFixers();
+  if (state.view === "mjeshtrit") renderMjeshtrit();
+  else refreshMjBadge();
+  if (state.view === "chat") renderChat();
+  else refreshChatBadge();
   const waiting = state.reports.filter((r) => r.fix_status === "pending").length;
   $("#fix-badge").textContent = waiting;
   $("#fix-badge").classList.toggle("hidden", !waiting);
@@ -138,19 +144,176 @@ async function renderFixers() {
       </div>
     </div>`).join("") : '<p class="muted">Nothing to check.</p>';
 
-  const rows = await api("/admin/rewards");
-  $("#reward-empty").classList.toggle("hidden", rows.length > 0);
-  $("#reward-rows").innerHTML = rows.map((u) => `
-    <tr>
-      <td>${esc(u.name)}<br><small class="muted">${esc(u.email)}</small></td>
-      <td>${esc(u.neighbourhood || "—")}</td>
-      <td>${u.verified} <span class="muted">(${u.verified % 20}/20 to next)</span></td>
-      <td>${u.rewards_earned}</td>
-      <td>${u.rewards_paid}</td>
-      <td>${u.owed_eur ? `<b class="owed">€${u.owed_eur}</b>` : '<span class="muted">—</span>'}</td>
-      <td>${u.owed_eur ? `<button class="btn ghost" data-paid="${u.user_id}" data-name="${esc(u.name)}" data-eur="${u.owed_eur}">Mark paid</button>` : ""}</td>
+  await renderPartners();
+}
+
+// ---------- mjeshtrit (skilled volunteers) ----------
+const SKILL = { plumbing: "🔧 Plumbing", electrics: "⚡ Electrics", building: "🧱 Building", painting: "🎨 Painting",
+  carpentry: "🪚 Carpentry", gardening: "🌳 Gardening", welding: "🔥 Welding" };
+const DAY = { weekday_evenings: "Weekday evenings", saturday: "Saturday", sunday: "Sunday", holidays: "Holidays" };
+const VERDICT = { legit: ["✓ Looks genuine", "ok"], suspicious: ["? Unclear", "warn"], fake: ["✗ Looks fake", "bad"],
+  not_a_document: ["✗ Not a document", "bad"], unavailable: ["AI was busy", "warn"] };
+let mjRows = [];
+
+async function refreshMjBadge() {
+  try {
+    mjRows = await api("/admin/mjeshtrit");
+    const waiting = mjRows.filter((m) => m.status === "pending").length;
+    $("#mj-badge").textContent = waiting;
+    $("#mj-badge").classList.toggle("hidden", !waiting);
+  } catch { /* ignore */ }
+}
+
+async function renderMjeshtrit() {
+  await refreshMjBadge();
+  $("#mj-empty").classList.toggle("hidden", mjRows.length > 0);
+  $("#mj-list").innerHTML = mjRows.map((m) => {
+    const [vText, vCls] = VERDICT[m.ai_verdict] || ["Not checked", "warn"];
+    const status = { pending: "Waiting for you", approved: `Approved${m.verified_by === "ai" ? " by AI" : ""}`, rejected: "Rejected" }[m.status];
+    return `
+    <div class="mj-card ${m.status}">
+      <div class="mj-head">
+        <div><b>${esc(m.user_name)}</b> <small class="muted">${esc(m.user_email)}</small><br>
+          <small class="muted">${esc(m.neighbourhood || "—")} · applied ${fmtDate(m.created_at)}</small></div>
+        <span class="mj-status ${m.status}">${status}</span>
+      </div>
+      <div>${m.skills.map((s) => `<span class="tag ${m.verified_skills.includes(s) ? "on" : ""}">${SKILL[s] || esc(s)}${m.verified_skills.includes(s) ? " ✓" : ""}</span>`).join("")}</div>
+      <div class="muted">${m.days.map((d) => DAY[d] || esc(d)).join(" · ") || "No days given"}</div>
+      ${m.bio ? `<p class="mj-bio">“${esc(m.bio)}”</p>` : ""}
+      <div class="mj-ai">
+        <div><span class="verdict ${vCls}">🤖 ${vText}</span>${m.ai_confidence != null ? ` <small class="muted">${m.ai_confidence}% sure</small>` : ""}</div>
+        ${m.ai_verdict && m.ai_verdict !== "unavailable" ? `
+        <dl>
+          <dt>Document</dt><dd>${esc((m.ai_doc_type || "—").replaceAll("_", " "))}${m.ai_issuer ? ` · ${esc(m.ai_issuer)}` : ""}</dd>
+          <dt>Name on it</dt><dd>${esc(m.ai_name_on_doc || "—")} ${m.ai_name_matches === false ? '<b class="owed">doesn’t match</b>' : m.ai_name_matches ? "✓" : ""}</dd>
+          <dt>Shows skills</dt><dd>${m.ai_skills.length ? m.ai_skills.map((s) => SKILL[s] || esc(s)).join(", ") : "none of the claimed ones"}</dd>
+          <dt>Genuine?</dt><dd>${m.ai_looks_genuine ? "No signs of forgery" : '<b class="owed">Signs of forgery or a template</b>'}</dd>
+        </dl>
+        ${m.ai_reason ? `<q class="transcript">${esc(m.ai_reason)}</q>` : ""}` : ""}
+      </div>
+      ${m.admin_note ? `<p class="muted">Your note: ${esc(m.admin_note)}</p>` : ""}
+      <div class="fix-actions">
+        <button class="btn ghost" data-mjdoc="${m.id}" data-mime="${esc(m.proof_mime || "")}">View document</button>
+        ${m.status !== "approved" ? `<button class="btn primary" data-mjok="${m.id}">Approve</button>` : ""}
+        ${m.status !== "rejected" ? `<button class="btn danger" data-mjno="${m.id}" data-name="${esc(m.user_name)}">${m.status === "approved" ? "Remove" : "Reject"}</button>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+document.addEventListener("click", async (e) => {
+  const doc = e.target.closest("[data-mjdoc]");
+  if (doc) {
+    // The document needs the admin token, so fetch it and open it as a blob (never a public URL).
+    const res = await fetch(`${API}/admin/mjeshtrit/${doc.dataset.mjdoc}/proof`, { headers: { Authorization: `Bearer ${state.token}` } });
+    if (!res.ok) return alert("Couldn't open the document");
+    window.open(URL.createObjectURL(await res.blob()), "_blank", "noopener");
+    return;
+  }
+  const ok = e.target.closest("[data-mjok]");
+  if (ok) {
+    await api(`/admin/mjeshtrit/${ok.dataset.mjok}/approve`, { method: "POST", body: "{}" });
+    renderMjeshtrit();
+    return;
+  }
+  const no = e.target.closest("[data-mjno]");
+  if (no) {
+    const note = prompt(`Why can't ${no.dataset.name} be a mjeshtër? (sent to them)`, "We couldn't verify your document. Please send a clearer photo of your certificate.");
+    if (note === null) return;
+    await api(`/admin/mjeshtrit/${no.dataset.mjno}/reject`, { method: "POST", body: JSON.stringify({ note }) });
+    renderMjeshtrit();
+  }
+});
+
+// ---------- partner rewards ----------
+let partners = [];
+async function renderPartners() {
+  const [list, claims] = await Promise.all([api("/admin/partners"), api("/admin/reward-claims")]);
+  partners = list;
+  $("#partner-empty").classList.toggle("hidden", list.length > 0);
+  $("#partner-rows").innerHTML = list.map((r) => `
+    <tr class="${r.active ? "" : "off"}">
+      <td><span class="emoji">${esc(r.emoji)}</span> <b>${esc(r.partner)}</b> · ${esc(r.title)}
+        ${r.details ? `<br><small class="muted">${esc(r.details)}</small>` : ""}</td>
+      <td>${r.cost}</td>
+      <td>${r.stock == null ? '<span class="muted">No limit</span>' : r.stock === 0 ? '<b class="owed">Sold out</b>' : r.stock}</td>
+      <td>${r.claimed}</td>
+      <td>${r.active ? "On offer" : '<span class="muted">Hidden</span>'}</td>
+      <td class="nowrap">
+        <button class="btn ghost" data-pedit="${r.id}">Edit</button>
+        <button class="btn danger" data-pdel="${r.id}">${r.claimed ? "Hide" : "Delete"}</button>
+      </td>
+    </tr>`).join("");
+  $("#claim-empty").classList.toggle("hidden", claims.length > 0);
+  $("#claim-rows").innerHTML = claims.map((c) => `
+    <tr class="${c.used ? "off" : ""}">
+      <td><code>${esc(c.code)}</code></td>
+      <td>${esc(c.emoji)} ${esc(c.partner)} · ${esc(c.title)} <small class="muted">(${c.cost} badges)</small></td>
+      <td>${esc(c.user_name || "")}<br><small class="muted">${esc(c.user_email || "")}</small></td>
+      <td>${new Date(c.created_at + "Z").toLocaleDateString()}</td>
+      <td>${c.used ? `<span class="muted">Used ${new Date(c.used_at + "Z").toLocaleDateString()}</span>`
+        : `<button class="btn ghost" data-cused="${c.id}" data-code="${esc(c.code)}">Mark used</button>`}</td>
     </tr>`).join("");
 }
+
+function partnerFormReset() {
+  const f = $("#partner-form");
+  f.reset();
+  f.id.value = "";
+  $("#partner-save").textContent = "Add reward";
+  $("#partner-cancel").classList.add("hidden");
+}
+
+$("#partner-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    partner: f.partner.value.trim(), title: f.title.value.trim(), details: f.details.value.trim() || null,
+    emoji: f.emoji.value.trim() || "🎁", cost: Number(f.cost.value),
+    stock: f.stock.value === "" ? null : Number(f.stock.value), active: f.active.checked,
+  };
+  try {
+    if (f.id.value) await api(`/admin/partners/${f.id.value}`, { method: "PUT", body: JSON.stringify(body) });
+    else await api("/admin/partners", { method: "POST", body: JSON.stringify(body) });
+    partnerFormReset();
+    renderPartners();
+  } catch (err) {
+    alert(err.message);
+  }
+});
+$("#partner-cancel").addEventListener("click", partnerFormReset);
+
+document.addEventListener("click", async (e) => {
+  const ed = e.target.closest("[data-pedit]");
+  if (ed) {
+    const r = partners.find((x) => x.id === Number(ed.dataset.pedit));
+    const f = $("#partner-form");
+    f.id.value = r.id; f.emoji.value = r.emoji; f.partner.value = r.partner; f.title.value = r.title;
+    f.details.value = r.details || ""; f.cost.value = r.cost; f.stock.value = r.stock ?? ""; f.active.checked = r.active;
+    $("#partner-save").textContent = "Save changes";
+    $("#partner-cancel").classList.remove("hidden");
+    f.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  const del = e.target.closest("[data-pdel]");
+  if (del) {
+    const r = partners.find((x) => x.id === Number(del.dataset.pdel));
+    const msg = r.claimed
+      ? `Hide “${r.title}”? The ${r.claimed} voucher(s) already given stay valid.`
+      : `Delete “${r.title}” from ${r.partner}? This can't be undone.`;
+    if (!confirm(msg)) return;
+    await api(`/admin/partners/${r.id}`, { method: "DELETE" });
+    renderPartners();
+    return;
+  }
+  const used = e.target.closest("[data-cused]");
+  if (used) {
+    if (!confirm(`Mark voucher ${used.dataset.code} as used? Do this when the partner has taken it.`)) return;
+    await api(`/admin/reward-claims/${used.dataset.cused}/used`, { method: "POST" });
+    renderPartners();
+  }
+});
+
 document.addEventListener("click", async (e) => {
   const v = e.target.closest("[data-verify]");
   if (v) {
@@ -160,12 +323,6 @@ document.addEventListener("click", async (e) => {
     await load();
     return;
   }
-  const p = e.target.closest("[data-paid]");
-  if (p) {
-    if (!confirm(`Record that ${p.dataset.name} was paid €${p.dataset.eur}? Pay them first; MendMap does not send money.`)) return;
-    await api(`/admin/rewards/${p.dataset.paid}/paid`, { method: "POST" });
-    renderFixers();
-  }
 });
 
 function renderTable(list) {
@@ -174,7 +331,7 @@ function renderTable(list) {
     <tr data-id="${r.id}">
       <td class="muted">#${r.id}</td>
       <td>${prio(r)}</td>
-      <td>${icon(r.category)} ${esc(r.category.name)}<br><small class="muted">${esc(r.neighbourhood || "")}</small></td>
+      <td>${icon(r.category)} ${esc(r.category.name)}${flagMark(r)}<br><small class="muted">${esc(r.address || r.neighbourhood || "")}</small></td>
       <td class="desc">${esc(r.description) || (r.voice_text ? `🎙️ ${esc(r.voice_text)}` : '<span class="muted">—</span>')}</td>
       <td>${pill(r.status)}</td>
       <td>${r.confirmations || ""}</td>
@@ -240,6 +397,8 @@ document.addEventListener("click", (e) => {
 });
 
 async function renderStats() {
+  renderSummary();
+  renderBoard();
   const s = await api("/admin/stats");
   const days = (d) => (d == null ? "—" : `${d} days`);
   $("#stat-cards").innerHTML = `
@@ -269,13 +428,20 @@ async function openReport(id) {
     ${pill(r.status)}
     ${r.photo_url ? `<a href="${esc(API + r.photo_url)}" target="_blank" rel="noopener"><img class="photo" src="${esc(API + r.photo_url)}" alt="Report photo"></a>` : '<div class="nophoto muted">No photo</div>'}
     ${r.after_photo_url ? `<p><a href="${esc(API + r.after_photo_url)}" target="_blank" rel="noopener">Photo of the finished work ↗</a></p>` : ""}
-    <p>${esc(r.description) || '<span class="muted">No description</span>'}</p>
+    <p>${esc(r.description) || '<span class="muted">No description</span>'}
+      ${r.ai_description && r.ai_description === r.description ? '<br><small class="muted">✨ Written by AI from the photo</small>' : ""}</p>
+    ${r.blurred ? `<p class="muted">🔒 ${r.blurred} face(s) or number plate(s) blurred for privacy</p>` : ""}
+    ${r.rating === 1 ? '<p class="muted">👍 The reporter confirmed the fix</p>' : ""}
+    ${r.reopened ? `<p class="owed">↺ Reopened ${r.reopened}× by the reporter: they said it wasn't fixed</p>` : ""}
     ${r.voice_url ? `<p><span class="muted">Voice note</span><br><audio controls preload="none" src="${esc(API + r.voice_url)}"></audio>
       ${r.voice_text ? `<br><q class="transcript">${esc(r.voice_text)}</q>` : ""}</p>` : ""}
     <dl>
       <dt>Priority</dt><dd>${prio(r)} ${r.priority_reasons.map((x) => `<span class="tag">${esc(REASON[x] || x)}</span>`).join(" ")}</dd>
       <dt>Severity</dt><dd>${r.severity ? `${r.severity} / 5` : '<span class="muted">—</span>'}</dd>
-      <dt>Area</dt><dd>${esc(r.neighbourhood || "—")}</dd>
+      <dt>Area</dt><dd>${esc(r.neighbourhood || "—")}${r.address ? `<br>🛣️ ${esc(r.address)}` : ""}
+        ${r.adopted_by?.length ? `<br><span class="tag">💚 Looked after by ${esc(r.adopted_by.join(", "))}</span>` : ""}</dd>
+      ${r.repeat_of ? `<dt>Came back</dt><dd class="owed">↺ Reported again after a fix: <a href="#" data-open="${r.repeat_of}">#${r.repeat_of}</a> was fixed here recently. The repair may not have held.</dd>` : ""}
+      ${fraudBlock(r)}
       <dt>Reported by</dt><dd>${esc(r.reporter_name || "—")}</dd>
       ${r.claimed_by ? `<dt>Neighbour fix</dt><dd>${esc(r.claimed_by_name || "A neighbour")} · ${
         { pending: "waiting for your check", verified: "accepted ✓" }[r.fix_status] || "working on it"}</dd>` : ""}
@@ -284,6 +450,7 @@ async function openReport(id) {
         : `${r.ai_is_problem ? `${esc(r.ai_category || "other")} · severity ${r.ai_severity ?? "—"}/5` : "⚠ May not be a street problem"}
            ${r.ai_is_problem ? `<span class="tag">${r.ai_neighbour_safe ? "✓ safe for neighbours" : "needs the crew"}</span>` : ""}
            ${r.ai_reason ? `<br><q class="transcript">${esc(r.ai_reason)}</q>` : ""}
+           ${r.ai_description && r.ai_description !== r.description ? `<br><span class="muted">AI sees:</span> ${esc(r.ai_description)}` : ""}
            ${r.ai_safety_reason ? `<br><q class="transcript">${esc(r.ai_safety_reason)}</q>` : ""}`}
         <br><button class="btn ghost" id="ai-check" type="button">${r.ai_is_problem == null ? "Run AI check" : "Check again"}</button>
         <span class="error" id="ai-error"></span></dd>
@@ -347,6 +514,11 @@ async function openReport(id) {
       $("#status-error").textContent = err.message;
     }
   });
+  $("#clear-flag")?.addEventListener("click", async () => {
+    await api(`/admin/reports/${r.id}/clear-flag`, { method: "POST" });
+    await load();
+    openReport(r.id);
+  });
   $("#ai-check").addEventListener("click", async (e) => {
     e.target.disabled = true;
     e.target.textContent = "Checking…";
@@ -371,6 +543,153 @@ function closeDrawer() { $("#drawer").classList.add("hidden"); }
 $("#drawer-close").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (e) => e.key === "Escape" && closeDrawer());
 
+// ---------- fraud checks ----------
+const FLAG = {
+  fake_photo: "The AI thinks the photo isn't a real photo of the street (screenshot, photo of a screen, drawing, AI-made or from the web)",
+  not_problem: "The AI doesn't see a street problem in the photo",
+  reused_photo: "The same photo was already used in another report",
+};
+const KIND = { real_photo: "Real photo", screenshot: "Screenshot", photo_of_screen: "Photo of a screen", drawing: "Drawing",
+  ai_generated: "AI-generated", stock_or_web: "From the web", edited: "Edited" };
+function flagMark(r) {
+  const marks = [];
+  if (r.flagged) marks.push(`<span class="flag" title="${esc(r.ai_flags.map((f) => FLAG[f] || f).join(" · "))}">⚑</span>`);
+  if (r.fix_ai === "fake" || r.fix_ai === "suspicious") marks.push('<span class="flag" title="The AI doubts the “fixed” photo">⚑ fix</span>');
+  if (r.repeat_of) marks.push(`<span class="tag" title="Reported again after #${r.repeat_of} was fixed here">↺ came back</span>`);
+  return marks.length ? " " + marks.join(" ") : "";
+}
+function fraudBlock(r) {
+  const rows = [];
+  if (r.ai_flags.length) rows.push(`<ul class="flags">${r.ai_flags.map((f) => `<li>⚑ ${esc(FLAG[f] || f)}${
+    f === "reused_photo" && r.reused_from ? ` (<a href="#" data-open="${r.reused_from}">#${r.reused_from}</a>)` : ""}</li>`).join("")}</ul>`);
+  if (r.ai_photo_kind && r.ai_photo_kind !== "real_photo")
+    rows.push(`<span class="muted">Photo looks like:</span> ${esc(KIND[r.ai_photo_kind] || r.ai_photo_kind)}${r.ai_kind_reason ? ` · <q>${esc(r.ai_kind_reason)}</q>` : ""}`);
+  if (r.fix_ai) rows.push(`<span class="muted">“Fixed” photo check:</span> ${esc({ ok: "✓ looks fixed", suspicious: "? unclear", fake: "✗ looks fake" }[r.fix_ai] || r.fix_ai)}${
+    r.fix_ai_reason ? ` · <q>${esc(r.fix_ai_reason)}</q>` : ""}`);
+  if (!rows.length) return "";
+  const btn = r.flagged ? '<br><button class="btn ghost" id="clear-flag" type="button">✓ I checked it: it\'s genuine</button>'
+    : r.flag_cleared ? '<br><span class="muted">✓ Cleared by city staff</span>' : "";
+  return `<dt>Fraud check</dt><dd class="${r.flagged ? "owed" : ""}">${rows.join("<br>")}${btn}</dd>`;
+}
+$("#review-all").addEventListener("click", async (e) => {
+  const b = e.target;
+  b.disabled = true;
+  b.textContent = "Checking…";
+  try {
+    const res = await api("/admin/ai/review-all", { method: "POST" });
+    b.textContent = `✓ ${res.reused_photos} reused photo(s) found · ${res.queued} sent to the AI`;
+    setTimeout(load, 4000);
+  } catch (err) {
+    b.textContent = err.message;
+  }
+  setTimeout(() => { b.disabled = false; b.textContent = "✨ Check all with AI"; }, 8000);
+});
+
+// ---------- summary, scoreboard, top 10 ----------
+async function renderSummary(fresh = false) {
+  const box = $("#summary");
+  box.innerHTML = '<p class="muted">✨ Writing the summary…</p>';
+  try {
+    const s = await api(`/admin/summary?days=${$("#sum-days").value}&lang=${$("#sum-lang").value}${fresh ? "&fresh=1" : ""}`);
+    const list = (xs) => xs.length ? xs.map(([n, k]) => `${esc(n)} <span class="muted">(${k})</span>`).join(", ") : '<span class="muted">—</span>';
+    box.innerHTML = `
+      <p class="summary-text">${s.text ? esc(s.text) : '<span class="muted">The AI is busy or not set up right now, so here are just the numbers. Try “Write again” in a few minutes.</span>'}</p>
+      <div class="cards">
+        <div class="card"><span class="muted">New reports</span><b>${s.new}</b></div>
+        <div class="card fixed"><span class="muted">Fixed</span><b>${s.fixed}</b></div>
+        <div class="card reported"><span class="muted">Waiting over 10 days</span><b>${s.waiting_long}</b></div>
+        <div class="card"><span class="muted">Came back after a fix</span><b>${s.came_back}</b></div>
+      </div>
+      <p><span class="muted">Busiest areas:</span> ${list(s.top_areas)}<br><span class="muted">Busiest streets:</span> ${list(s.top_streets)}</p>`;
+  } catch (err) {
+    box.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+  }
+}
+$("#sum-days").addEventListener("change", () => renderSummary());
+$("#sum-lang").addEventListener("change", () => renderSummary());
+$("#sum-fresh").addEventListener("click", () => renderSummary(true));
+$("#sum-email").addEventListener("click", async (e) => {
+  try {
+    const r = await api(`/admin/summary/email?days=${$("#sum-days").value}&lang=${$("#sum-lang").value}`, { method: "POST" });
+    e.target.textContent = `✓ Sent to ${r.to}`;
+  } catch (err) {
+    e.target.textContent = err.message;
+  }
+  setTimeout(() => { e.target.textContent = "✉ Email it to me"; }, 6000);
+});
+
+async function renderBoard() {
+  const [pub, top] = await Promise.all([api("/public/stats"), api("/public/top?days=30")]);
+  const pct = (x) => (x == null ? '<span class="muted">—</span>' : `${Math.round(x * 100)}%`);
+  const days = (d) => (d == null ? '<span class="muted">—</span>' : `${d} days`);
+  const board = [...pub.neighbourhoods].sort((a, b) => (a.avg_fix_days ?? 999) - (b.avg_fix_days ?? 999));
+  $("#board-rows").innerHTML = board.map((n) => `
+    <tr><td>${esc(n.name)}</td><td>${n.total}</td><td>${pct(n.fix_rate)}</td><td>${days(n.avg_fix_days)}</td>
+      <td>${pct(n.fixed_in_week)}</td><td>${n.came_back ? `<span class="owed">↺ ${n.came_back}</span>` : "0"}</td></tr>`).join("");
+  $("#top10").innerHTML = top.length ? top.map((r) => `
+    <li><a href="#" data-open="${r.id}">#${r.id} ${esc(r.title)}</a> · ${esc(r.address || r.neighbourhood || "")}
+      <span class="tag">👥 ${r.confirmations}</span> ${pill(r.status)}</li>`).join("")
+    : '<p class="muted">No confirmed open problems this month.</p>';
+}
+
+// ---------- chat moderation & announcements ----------
+let chatRooms = null;
+async function refreshChatBadge() {
+  try {
+    const flagged = await api("/admin/chat");
+    const n = flagged.filter((m) => !m.hidden).length;
+    $("#chat-badge").textContent = n;
+    $("#chat-badge").classList.toggle("hidden", !n);
+  } catch { /* ignore */ }
+}
+async function renderChat() {
+  if (!chatRooms) {
+    chatRooms = ["city", ...(await api("/neighbourhoods"))];
+    $("#ann-rooms").innerHTML = chatRooms.map((r) => `
+      <label class="check"><input type="checkbox" name="room" value="${esc(r)}" ${r === "city" ? "checked" : ""}/> ${r === "city" ? "🏙️ All of Prishtina" : esc(r)}</label>`).join("");
+  }
+  const all = $("#chat-all").checked;
+  const msgs = await api(`/admin/chat?flagged=${all ? "false" : "true"}`);
+  $("#chat-empty").classList.toggle("hidden", msgs.length > 0);
+  $("#chat-list").innerHTML = msgs.map((m) => `
+    <div class="chat-card ${m.hidden ? "is-hidden" : ""}">
+      <div class="chat-meta">
+        <b>${esc(m.user_name)}</b> <span class="muted">${esc(m.user_email)} · ${m.room === "city" ? "All of Prishtina" : esc(m.room)} · ${ago(m.created_at)}</span>
+        ${m.kind !== "message" ? `<span class="tag">${m.kind === "announcement" ? "📢 announcement" : "🧹 clean-up day"}</span>` : ""}
+        ${m.flags ? `<span class="tag bad">⚑ reported ${m.flags}×</span>` : ""}
+        ${m.hidden ? '<span class="tag">hidden</span>' : ""}
+      </div>
+      <p>${esc(m.text)}</p>
+      <div>${m.hidden
+        ? `<button class="btn ghost" data-chat-restore="${m.id}">Show again</button>`
+        : `<button class="btn danger" data-chat-hide="${m.id}">Hide</button>${m.flags ? ` <button class="btn ghost" data-chat-restore="${m.id}">It's fine: clear reports</button>` : ""}`}</div>
+    </div>`).join("");
+  refreshChatBadge();
+}
+$("#chat-all").addEventListener("change", renderChat);
+$("#chat-list").addEventListener("click", async (e) => {
+  const hide = e.target.closest("[data-chat-hide]");
+  const restore = e.target.closest("[data-chat-restore]");
+  if (!hide && !restore) return;
+  const id = (hide || restore).dataset[hide ? "chatHide" : "chatRestore"];
+  await api(`/admin/chat/${id}/${hide ? "hide" : "restore"}`, { method: "POST" });
+  renderChat();
+});
+$("#ann-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const rooms = f.getAll("room");
+  if (!rooms.length) { $("#ann-msg").textContent = "Pick at least one room."; return; }
+  try {
+    await api("/admin/announcements", { method: "POST", body: JSON.stringify({ rooms, text: f.get("text"), push: f.get("push") === "on" }) });
+    $("#ann-msg").textContent = `✓ Posted in ${rooms.length} room(s)`;
+    e.target.querySelector("textarea").value = "";
+    setTimeout(() => { $("#ann-msg").textContent = ""; }, 5000);
+  } catch (err) {
+    $("#ann-msg").textContent = err.message;
+  }
+});
+
 // ---------- navigation / filters ----------
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
   document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
@@ -381,6 +700,7 @@ document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("cli
 $("#f-category").addEventListener("change", load);
 $("#f-status").addEventListener("change", load);
 $("#f-search").addEventListener("input", render);
+$("#f-flagged").addEventListener("change", render);
 $("#refresh").addEventListener("click", load);
 
 async function start() {

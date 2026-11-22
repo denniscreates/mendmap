@@ -1,4 +1,5 @@
-import { Stack, useLocalSearchParams } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
+import { SKILL_ICON } from "../../lib/mjeshtrit";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import MapView, { Marker } from "react-native-maps";
@@ -43,6 +44,26 @@ export default function ReportScreen() {
   }, [id, tErr]);
   useEffect(() => void load(), [load]);
 
+  const [rating, setRating] = useState(false);
+  const rate = (ok: boolean) => {
+    const go = async () => {
+      setRating(true);
+      try {
+        setReport(await api.rateFix(Number(id), ok));
+        Alert.alert(t("thanks"), ok ? t("rateThanksOk") : t("rateThanksBad"));
+      } catch (e) {
+        Alert.alert("MendMap", tErr((e as Error).message));
+      } finally {
+        setRating(false);
+      }
+    };
+    if (ok) void go();
+    else Alert.alert(t("rateBadTitle"), t("rateBadBody"), [
+      { text: t("cancel"), style: "cancel" },
+      { text: t("rateBadYes"), style: "destructive", onPress: () => void go() },
+    ]);
+  };
+
   const confirm = async () => {
     setConfirming(true);
     try {
@@ -65,6 +86,19 @@ export default function ReportScreen() {
       Alert.alert("MendMap", tErr((e as Error).message));
     } finally {
       setFixBusy(false);
+    }
+  };
+
+  const [asking, setAsking] = useState(false);
+  const askMjeshter = async () => {
+    setAsking(true);
+    try {
+      const { notified } = await api.askMjeshter(Number(id));
+      Alert.alert(t("mjAskedTitle"), notified ? t("mjAsked", { n: notified }) : t("mjAskedNone"));
+    } catch (e) {
+      Alert.alert("MendMap", tErr((e as Error).message));
+    } finally {
+      setAsking(false);
     }
   };
 
@@ -143,14 +177,38 @@ export default function ReportScreen() {
           <StatusPill status={report.status} />
         </View>
         <T style={s.desc}>{report.description || t("noDescription")}</T>
+        {!!report.ai_description && report.description === report.ai_description && (
+          <T style={[s.muted, { fontSize: 12 }]}>✨ {t("aiWroteDesc")}</T>
+        )}
+
+        {mine && report.status === "fixed" && report.rating == null && (
+          <View style={s.rateBox}>
+            <T medium style={{ fontSize: 16 }}>{t("rateTitle")}</T>
+            <T style={s.muted}>{t("rateBody")}</T>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Button title={`👍 ${t("rateYes")}`} onPress={() => rate(true)} loading={rating} style={{ flex: 1 }} />
+              <Button title={`👎 ${t("rateNo")}`} variant="ghost" onPress={() => rate(false)} disabled={rating} style={{ flex: 1 }} />
+            </View>
+          </View>
+        )}
+        {report.rating === 1 && <T style={[s.muted, { color: colors.fixed }]}>👍 {mine ? t("ratedOkMine") : t("ratedOk")}</T>}
         <T style={s.muted}>
           {t("reportedOn", { d: formatDate(report.created_at) })}
           {report.confirmations > 0 ? `  ·  ${t("confirmedBy", { n: report.confirmations })}` : ""}
         </T>
 
         <View style={s.chips}>
+          {!!report.address && <T style={s.chip}>🛣️ {report.address}</T>}
+          {!!report.adopted_by?.length && <T style={s.chip}>💚 {t("stAdopted", { names: report.adopted_by.join(", ") })}</T>}
+          {!!report.repeat_of && (
+            <Pressable onPress={() => router.push(`/report/${report.repeat_of}`)}>
+              <T style={[s.chip, { color: colors.orange }]}>↺ {t("cameBack")} (#{report.repeat_of})</T>
+            </Pressable>
+          )}
           {!!report.neighbourhood && <T style={s.chip}>📍 {report.neighbourhood}</T>}
           {!!report.severity && <T style={s.chip}>{t("severityN", { s: report.severity })}</T>}
+          {!!report.blurred && <T style={s.chip}>🔒 {t("blurredN", { n: report.blurred })}</T>}
+          {!!report.reopened && <T style={[s.chip, { color: colors.orange }]}>↺ {t("reopenedN", { n: report.reopened })}</T>}
           {report.status !== "fixed" && report.priority > 0 && (
             <T style={[s.chip, { color: report.priority >= 60 ? colors.orange : colors.text }]}>{t("priorityN", { n: report.priority })}</T>
           )}
@@ -221,6 +279,23 @@ export default function ReportScreen() {
           onPress={() => share(report)}
           icon={<Ionicons name="share-outline" size={18} color={colors.text} />}
         />
+        <Button
+          title={t("chatShare")}
+          variant="ghost"
+          onPress={() =>
+            router.push({
+              pathname: "/chat/[room]",
+              params: {
+                // The report's neighbourhood room, or the whole city if it isn't in one.
+                room: report.neighbourhood ?? "city",
+                name: report.neighbourhood ?? "Prishtina",
+                report: String(report.id),
+                reportTitle: report.neighbourhood ? `${catName} · ${report.neighbourhood}` : catName,
+              },
+            })
+          }
+          icon={<Ionicons name="chatbubbles-outline" size={18} color={colors.text} />}
+        />
 
         <View style={s.map}>
           <MapView
@@ -270,6 +345,21 @@ export default function ReportScreen() {
           <View style={s.jobInfo}>
             <Ionicons name="warning-outline" size={18} color={colors.muted} />
             <T style={{ flex: 1, color: colors.muted }}>{t("jobFlagged")}</T>
+          </View>
+        )}
+        {job === "mjeshter" && (
+          <View style={s.jobBox}>
+            <T medium style={{ fontSize: 16 }}>
+              {SKILL_ICON[report.skill_needed ?? "any"]} {t("mjJobTitle", { skill: t(`skill_${report.skill_needed ?? "any"}` as TKey) })}
+            </T>
+            <T style={s.muted}>{t("mjJobBody")}</T>
+            <Button title={t("mjAsk")} variant="orange" onPress={askMjeshter} loading={asking}
+              icon={<Ionicons name="megaphone" size={18} color="#fff" />} />
+            {user?.mjeshter_status !== "approved" && (
+              <Pressable onPress={() => router.push("/mjeshtrit")} hitSlop={8}>
+                <T medium style={{ color: colors.accent, textAlign: "center" }}>{t("mjAreYou")}</T>
+              </Pressable>
+            )}
           </View>
         )}
         {job === "crew" && (
@@ -357,6 +447,7 @@ const makeStyles = (c: Palette) =>
       gap: 6, borderWidth: 1.5, borderStyle: "dashed", borderColor: c.orange, backgroundColor: c.surface2,
     },
     jobBox: { gap: 8, padding: 14, borderRadius: 16, borderWidth: 1.5, borderColor: c.orange, backgroundColor: c.orange + "14" },
+    rateBox: { gap: 8, padding: 14, borderRadius: 16, backgroundColor: c.blue + "1f", borderWidth: 1, borderColor: c.blue + "55" },
     flagBox: { gap: 4, padding: 12, borderRadius: 14, backgroundColor: c.danger + "14", borderWidth: 1, borderColor: c.danger + "55" },
     aiPanel: { gap: 4, padding: 12, borderRadius: 14, backgroundColor: c.blue + "14", borderWidth: 1, borderColor: c.blue + "33" },
     jobInfo: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 14, backgroundColor: c.surface2 },

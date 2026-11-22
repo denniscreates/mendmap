@@ -212,3 +212,53 @@ a.btn { text-decoration: none; }
 .fix-card .before-after figure { margin: 0; min-width: 0; }
 .fix-card .photo { width: 100%; height: 140px; object-fit: cover; }
 .transcript { display: block; margin-top: 6px; color: var(--muted); font-style: italic; }
+
+/* Partner rewards */
+.partner-form { display: grid; grid-template-columns: 90px 1fr 1fr 110px 130px; gap: 10px 12px; align-items: end;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+.partner-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.partner-form label.wide { grid-column: 1 / -1; }
+.partner-form label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+.partner-form .partner-actions { grid-column: 2 / -1; display: flex; gap: 8px; justify-content: flex-end; }
+tr.off td { opacity: 0.55; }
+.emoji { font-size: 18px; }
+.nowrap { white-space: nowrap; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: 14px; letter-spacing: 1px; }
+@media (max-width: 800px) { .partner-form { grid-template-columns: 1fr 1fr; } .partner-form .partner-actions { grid-column: 1 / -1; } }
+
+/* Mjeshtrit */
+.mj-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.mj-card { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
+.mj-card.pending { border-color: var(--amber); }
+.mj-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.mj-status { font-size: 12px; padding: 3px 10px; border-radius: 999px; white-space: nowrap; background: var(--surface-2); }
+.mj-status.pending { color: var(--amber); }
+.mj-status.approved { color: var(--accent); }
+.mj-status.rejected { color: var(--danger); }
+.tag.on { outline: 1px solid var(--accent); }
+.mj-bio { margin: 0; font-style: italic; }
+.mj-ai { padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.mj-ai dl { margin: 8px 0; }
+.verdict { font-weight: 500; }
+.verdict.ok { color: var(--accent); }
+.verdict.warn { color: var(--amber); }
+.verdict.bad { color: var(--danger); }
+
+/* ---------- fraud flags, summary, scoreboard, chat moderation ---------- */
+.flag { color: var(--orange, #f26a2e); font-size: .85em; cursor: help; }
+ul.flags { margin: 0 0 4px; padding-left: 18px; }
+.filters label.check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.summary-card { border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 18px; background: var(--surface); }
+.summary-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.summary-head h3 { margin: 0 auto 0 0; }
+.summary-text { font-size: 15px; line-height: 1.55; }
+.top10 { padding-left: 22px; line-height: 2; }
+.ann-form { display: grid; gap: 10px; max-width: 760px; margin-bottom: 18px; }
+.ann-form textarea { min-height: 80px; }
+.ann-rooms { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.ann-rooms label.check, .summary-head label.check { display: inline-flex; align-items: center; gap: 6px; }
+.chat-list { display: grid; gap: 10px; margin-top: 10px; }
+.chat-card { border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; background: var(--surface); }
+.chat-card p { margin: 6px 0 10px; white-space: pre-wrap; }
+.chat-card.is-hidden { opacity: .6; }
+.tag.bad { color: #fff; background: #d64545; }

@@ -36,8 +36,13 @@ function Root({ fontsLoaded }: { fontsLoaded: boolean }) {
   useEffect(() => {
     // Tapping a status notification opens that report.
     const sub = Notifications.addNotificationResponseReceivedListener((res) => {
-      const id = res.notification.request.content.data?.reportId;
-      if (id) router.push(`/report/${id}`);
+      const data = res.notification.request.content.data;
+      if (data?.reportId) router.push(`/report/${data.reportId}`);
+      else if (data?.screen === "rewards") router.push("/rewards");
+      else if (data?.screen === "mjeshtrit") router.push("/mjeshtrit");
+      else if (data?.screen === "report" && data.id) router.push(`/report/${data.id}`);
+      else if (data?.screen === "event" && data.id) router.push(`/cleanup/${data.id}`);
+      else if (data?.screen === "chat" && data.room) router.push({ pathname: "/chat/[room]", params: { room: String(data.room) } });
     });
     return () => sub.remove();
   }, []);
@@ -64,6 +69,14 @@ function Root({ fontsLoaded }: { fontsLoaded: boolean }) {
           <Stack.Screen name="login" options={{ headerShown: false, animation: "fade" }} />
           <Stack.Screen name="report/[id]" options={{ title: t("report") }} />
           <Stack.Screen name="my-reports" options={{ title: t("tabMine"), headerBackTitle: t("tabSettings") }} />
+          <Stack.Screen name="rewards" options={{ title: t("rewardsTitle") }} />
+          <Stack.Screen name="mjeshtrit" options={{ title: t("mjTitle") }} />
+          <Stack.Screen name="mjeshter-apply" options={{ title: t("mjBecome") }} />
+          <Stack.Screen name="chat/[room]" options={{ title: t("chatTitle"), headerBackTitle: t("tabChat") }} />
+          <Stack.Screen name="cleanups" options={{ title: t("cuTitle") }} />
+          <Stack.Screen name="cleanup-new" options={{ title: t("cuNew"), presentation: "modal" }} />
+          <Stack.Screen name="cleanup/[id]" options={{ title: t("cuTitle") }} />
+          <Stack.Screen name="streets" options={{ title: t("stTitle") }} />
         </Stack>
       )}
       {(showIntro || !fontsLoaded) && <Intro onDone={() => setShowIntro(false)} />}

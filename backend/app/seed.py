@@ -17,7 +17,7 @@ from sqlalchemy import delete, select
 from .auth import hash_password
 from .db import Base, SessionLocal, engine
 from .demo_images import make_after_photo, make_photo
-from .models import Category, Confirmation, Report, StatusUpdate, User, migrate, now
+from .models import Category, Confirmation, Report, StatusUpdate, User, migrate, now, PartnerReward, Mjeshter
 
 UPLOADS = Path(__file__).resolve().parent.parent / "uploads"
 
@@ -89,6 +89,38 @@ PRISHTINA = [
 SEVERITY = [4, 3, 3, 4, 3, 4, 2, 2, 3, 3, 3, 2, 3, 5, 1, 3, 4, 4, 3]
 
 
+# Demo mjeshtrit (skilled volunteers), already verified by the city: name, email, skills, days, area, bio.
+MJESHTRIT = [
+    ("Arben Krasniqi", "arben@mendmap.local", "plumbing,building", "saturday,sunday", "Kalabria",
+     "Plumber for 15 years. Happy to fix drains and paving on Sundays."),
+    ("Blerta Hoxha", "blerta@mendmap.local", "painting,carpentry", "sunday,holidays", "Dardania",
+     "Painter and carpenter. Benches, fences, playgrounds."),
+    ("Dritan Berisha", "dritan@mendmap.local", "welding,gardening", "weekday_evenings,sunday", "Ulpiana",
+     "Welder. I can fix railings, gates and bike racks."),
+]
+
+
+def seed_mjeshtrit(db) -> int:
+    added = 0
+    for name, email, skills, days, area, bio in MJESHTRIT:
+        u = _citizen(db, name, email, "mjeshter123")
+        u.neighbourhood = u.neighbourhood or area
+        if not db.scalar(select(Mjeshter).where(Mjeshter.user_id == u.id)):
+            db.add(Mjeshter(user_id=u.id, skills=skills, verified_skills=skills, days=days, neighbourhood=area, bio=bio,
+                            status="approved", verified_by="admin", ai_verdict="legit"))
+            added += 1
+    db.commit()
+    return added
+
+
+# Demo partner rewards. Admins add, edit and hide real ones in the dashboard.
+PARTNERS = [
+    ("Kafe Lagjja", "2 free coffees", "Show the code at the counter.", "☕", 5, None),
+    ("Kino Qyteti", "2 cinema tickets", "Any film, any day. Show the code at the ticket desk.", "🎬", 10, 30),
+    ("Zhuzuff Kitchen", "Free dinner for 2", "Two main dishes and drinks. Book a table and show the code.", "🍽️", 20, 10),
+]
+
+
 def seed() -> None:
     with SessionLocal() as db:
         have = set(db.scalars(select(Category.icon)))
@@ -108,6 +140,11 @@ def seed() -> None:
 
         if os.getenv("SEED_DEMO") == "1" and not db.scalar(select(Report).limit(1)):
             seed_prishtina(db)
+        if os.getenv("SEED_DEMO") == "1" and not db.scalar(select(Mjeshter).limit(1)):
+            seed_mjeshtrit(db)
+        if os.getenv("SEED_DEMO") == "1" and not db.scalar(select(PartnerReward).limit(1)):
+            db.add_all(PartnerReward(partner=p, title=t, details=d, emoji=e, cost=c, stock=n) for p, t, d, e, c, n in PARTNERS)
+            db.commit()
 
 
 def _citizen(db, name: str, email: str, password: str) -> User:

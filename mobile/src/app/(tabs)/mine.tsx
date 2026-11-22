@@ -48,7 +48,7 @@ function Settings() {
             onChange={setLang}
             options={[
               { value: "en", label: LANG_NAME.en },
-              { value: localLang, label: LANG_NAME[localLang] },
+              { value: localLang, label: (LANG_NAME[localLang] ?? localLang.toUpperCase()) },
             ]}
           />
         </>
@@ -220,8 +220,23 @@ function CitizenSettings() {
           label={t("tabFix")}
           value={fixer ? t("fixerBadges", { n: fixer.verified }) : undefined}
           onPress={() => router.push("/fix")}
-          last
         />
+        <Row
+          icon="construct"
+          color={colors.blue}
+          label={t("mjTitle")}
+          value={user?.mjeshter_status === "approved" ? `✓ ${t("mjVerifiedShort")}` : user?.mjeshter_status === "pending" ? t("mjPendingShort") : undefined}
+          onPress={() => router.push("/mjeshtrit")}
+        />
+        <Row
+          icon="gift"
+          color={colors.amber}
+          label={t("rewardsTitle")}
+          value={fixer ? t("rewardsBalance", { n: fixer.balance }) : undefined}
+          onPress={() => router.push("/rewards")}
+        />
+        <Row icon="trail-sign" color={colors.fixed} label={t("stTitle")} onPress={() => router.push("/streets")} />
+        <Row icon="leaf" color={colors.orange} label={t("cuTitle")} onPress={() => router.push("/cleanups")} last />
       </View>
 
       {/* Look and language */}
