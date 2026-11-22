@@ -128,6 +128,11 @@ export default function MjeshtritScreen() {
           </View>
           {m.days.length > 0 && <T style={s.muted}>📅 {m.days.map((d) => t(`day_${d}` as TKey)).join(", ")}</T>}
           {!!m.bio && <T style={{ fontStyle: "italic" }}>“{m.bio}”</T>}
+          {citizen && (
+            <Button title={t("bkAsk")} variant="orange"
+              icon={<Ionicons name="camera" size={18} color="#fff" />}
+              onPress={() => router.push({ pathname: "/book", params: { mj: String(m.id), name: m.name, skill: skill ?? (m.skills.length === 1 ? m.skills[0] : "") } })} />
+          )}
         </Animated.View>
       ))}
     </ScrollView>

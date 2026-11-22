@@ -236,6 +236,7 @@ function CitizenSettings() {
           onPress={() => router.push("/rewards")}
         />
         <Row icon="trail-sign" color={colors.fixed} label={t("stTitle")} onPress={() => router.push("/streets")} />
+        <Row icon="briefcase" color={colors.blue} label={t("bkTitle")} onPress={() => router.push("/bookings")} />
         <Row icon="leaf" color={colors.orange} label={t("cuTitle")} onPress={() => router.push("/cleanups")} last />
       </View>
 

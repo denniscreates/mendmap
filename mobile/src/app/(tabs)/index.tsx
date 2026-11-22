@@ -3,7 +3,7 @@ import * as Location from "expo-location";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import MapView, { Marker, type Region } from "react-native-maps";
+import MapView, { Marker, type Region } from "../../components/Map";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MapPin, Segmented, StatusPill, T, useTimeAgo, Wordmark } from "../../components/ui";
 import { api, photoUrl, type Category, type Report } from "../../lib/api";

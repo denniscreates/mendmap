@@ -5,7 +5,7 @@ import * as Location from "expo-location";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import MapView from "react-native-maps";
+import MapView from "../../components/Map";
 import { VoiceRecorder } from "../../components/media";
 import { Button, Input, MapPin, StatusPill, T, useTimeAgo } from "../../components/ui";
 import { api, ApiError, photoUrl, type Category, type PhotoCheck, type Place, type Report } from "../../lib/api";

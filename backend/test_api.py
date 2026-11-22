@@ -794,5 +794,106 @@ def test_community():
             _ai.translate_text = real
 
 
+def test_bookings():
+    """Paid jobs: photo -> quote -> pay (demo, then Stripe stubbed) with a 10% commission -> done."""
+    import asyncio, hashlib, hmac, json, time
+    from app import bookings as bk
+    from app.db import SessionLocal
+    from app.models import Mjeshter, User
+    from sqlalchemy import select
+
+    with TestClient(app) as c:
+        def user(name, email):
+            return {"Authorization": f"Bearer {reg(c, {'name': name, 'email': email, 'password': 'secret1'}).json()['token']}"}
+        hc, hw, hx = user("Vera Customer", "vera@b.io"), user("Gent Worker", "gent@b.io"), user("Nosy Neighbour", "nosy@b.io")
+        with SessionLocal() as db:
+            w = db.scalar(select(User).where(User.email == "gent@b.io"))
+            m = Mjeshter(user_id=w.id, skills="plumbing", verified_skills="plumbing", status="approved", verified_by="admin")
+            db.add(m); db.commit(); mid, wid = m.id, w.id
+
+        # Ask for a price with a photo; the photo is private to the two of them.
+        r = c.post("/bookings", headers=hc, data={"mjeshter_id": mid, "description": "Leaking pipe under the sink"},
+                   files={"photo": ("p.png", PNG, "image/png")})
+        assert r.status_code == 201, r.text
+        b = r.json()
+        assert b["status"] == "requested" and b["has_photo"] and b["as_role"] == "customer" and b["skill"] == "plumbing"
+        assert c.post("/bookings", headers=hw, data={"mjeshter_id": mid, "description": "Book myself"},
+                      files={"photo": ("p.png", PNG, "image/png")}).status_code == 400
+        assert c.get(f"/bookings/{b['id']}/photo", headers=hw).status_code == 200
+        assert c.get(f"/bookings/{b['id']}/photo", headers=hx).status_code == 404
+        assert c.get(f"/bookings/{b['id']}", headers=hx).status_code == 404
+        assert [x["id"] for x in c.get("/bookings", headers=hw, params={"as": "worker"}).json()] == [b["id"]]
+
+        # Only the mjeshtër quotes, within limits.
+        assert c.post(f"/bookings/{b['id']}/quote", headers=hc, json={"fee": 40}).status_code == 403
+        assert c.post(f"/bookings/{b['id']}/quote", headers=hw, json={"fee": 1}).status_code == 400
+        q = c.post(f"/bookings/{b['id']}/quote", headers=hw, json={"fee": 40, "note": "New pipe included"}).json()
+        assert q["status"] == "quoted" and q["fee_cents"] == 4000 and q["commission_cents"] == 400 and q["worker_gets_cents"] == 3600
+
+        # No Stripe keys and no demo mode: paying is switched off.
+        os.environ.pop("STRIPE_SECRET_KEY", None); os.environ.pop("STRIPE_PUBLISHABLE_KEY", None)
+        os.environ["MENDMAP_DEMO_PAYMENTS"] = "off"
+        assert c.post(f"/bookings/{b['id']}/pay", headers=hc).status_code == 503
+        # Demo mode: no money moves, the booking is marked paid.
+        os.environ["MENDMAP_DEMO_PAYMENTS"] = "on"
+        pay = c.post(f"/bookings/{b['id']}/pay", headers=hc).json()
+        assert pay["mode"] == "demo" and pay["amount_cents"] == 4000 and pay["commission_cents"] == 400
+        assert c.post(f"/bookings/{b['id']}/pay", headers=hw).status_code == 403
+        paid = c.post(f"/bookings/{b['id']}/confirm-payment", headers=hc).json()
+        assert paid["status"] == "paid" and paid["commission_cents"] == 400
+        assert c.post(f"/bookings/{b['id']}/cancel", headers=hc).status_code == 409
+        assert c.post(f"/bookings/{b['id']}/done", headers=hw).json()["status"] == "done"
+        os.environ["MENDMAP_DEMO_PAYMENTS"] = "off"
+
+        # Stripe (stubbed): the quote needs payouts, the payment sends 90% to the mjeshtër.
+        calls = []
+        acct = {"ready": False}
+
+        async def fake_stripe(method, path, data=None, idem=None):
+            calls.append((method, path, data))
+            if path == "/accounts":
+                return {"id": "acct_test"}
+            if path.startswith("/accounts/"):
+                return {"charges_enabled": acct["ready"], "payouts_enabled": acct["ready"]}
+            if path == "/account_links":
+                return {"url": "https://connect.stripe.test/onboard"}
+            if method == "POST" and path == "/payment_intents":
+                return {"id": "pi_test", "client_secret": "pi_test_secret", "amount": data["amount"], "status": "requires_payment_method"}
+            if path == "/payment_intents/pi_test":
+                return {"id": "pi_test", "amount": 2550, "status": "succeeded", "metadata": {"booking_id": str(b2["id"])}}
+            raise AssertionError(path)
+
+        real = bk.stripe_call
+        bk.stripe_call = fake_stripe
+        os.environ["STRIPE_SECRET_KEY"], os.environ["STRIPE_PUBLISHABLE_KEY"] = "sk_test_x", "pk_test_x"
+        try:
+            b2 = c.post("/bookings", headers=hc, data={"mjeshter_id": mid, "description": "Paint the fence"},
+                        files={"photo": ("p.png", PNG, "image/png")}).json()
+            assert c.post(f"/bookings/{b2['id']}/quote", headers=hw, json={"fee": 25.5}).status_code == 409  # no payouts yet
+            assert c.post("/payouts/onboard", headers=hc).status_code == 403  # not a mjeshtër
+            assert c.post("/payouts/onboard", headers=hw).json()["url"].startswith("https://connect.stripe.test")
+            assert c.get("/payouts/me", headers=hw).json() == {"configured": True, "demo": False, "started": True, "ready": False, "commission_rate": 0.1}
+            acct["ready"] = True
+            assert c.get("/payouts/me", headers=hw).json()["ready"] is True
+            assert c.post(f"/bookings/{b2['id']}/quote", headers=hw, json={"fee": 25.5}).json()["fee_cents"] == 2550
+            pay = c.post(f"/bookings/{b2['id']}/pay", headers=hc).json()
+            assert pay["mode"] == "stripe" and pay["client_secret"] == "pi_test_secret" and pay["publishable_key"] == "pk_test_x"
+            pi = next(d for m_, p_, d in calls if p_ == "/payment_intents")
+            assert pi["amount"] == 2550 and pi["application_fee_amount"] == 255 and pi["transfer_data"] == {"destination": "acct_test"}
+            done = c.post(f"/bookings/{b2['id']}/confirm-payment", headers=hc).json()
+            assert done["status"] == "paid" and done["commission_cents"] == 255 and done["worker_gets_cents"] == 2295
+        finally:
+            bk.stripe_call = real
+            os.environ.pop("STRIPE_SECRET_KEY"); os.environ.pop("STRIPE_PUBLISHABLE_KEY")
+
+        # Webhook signatures are checked.
+        secret, payload = "whsec_x", json.dumps({"type": "ping"}).encode()
+        ts = int(time.time())
+        sig = hmac.new(secret.encode(), f"{ts}.".encode() + payload, hashlib.sha256).hexdigest()
+        assert bk._signed(payload, f"t={ts},v1={sig}", secret)
+        assert not bk._signed(payload, f"t={ts},v1={'0' * 64}", secret)
+        assert not bk._signed(payload, f"t={ts - 999},v1={sig}", secret)
+
+
 if __name__ == "__main__":
-    test_lifecycle(); test_gemini_stubbed(); test_rating(); test_mjeshtrit(); test_translate(); test_chat(); test_street_search(); test_community(); test_fraud(); test_gemini_hedge(); print("OK")
+    test_lifecycle(); test_gemini_stubbed(); test_rating(); test_mjeshtrit(); test_translate(); test_chat(); test_street_search(); test_community(); test_fraud(); test_gemini_hedge(); test_bookings(); print("OK")

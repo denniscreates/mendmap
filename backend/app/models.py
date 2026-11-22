@@ -48,6 +48,9 @@ class User(Base):
     rewards_paid: Mapped[int] = mapped_column(Integer, default=0)
     # How the account was made: email, google or apple (Google/Apple are demo sign-ins for now).
     auth_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Paid jobs: the mjeshtër's Stripe Connect account (they get their share of each booking there).
+    stripe_account: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    payouts_ready: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -296,10 +299,40 @@ class Confirmation(Base):
 
 # Columns added after the first release. create_all() only creates missing tables,
 # so existing databases get the new columns here.
+class Booking(Base):
+    """A paid job: a resident asks a mjeshtër for a price (with a photo), the mjeshtër quotes, the resident pays.
+    status: requested -> quoted -> paid -> done, or declined / cancelled."""
+
+    __tablename__ = "bookings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    worker_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    mjeshter_id: Mapped[int] = mapped_column(ForeignKey("mjeshtrit.id"))
+    report_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    skill: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    description: Mapped[str] = mapped_column(Text)
+    address: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    photo_path: Mapped[str | None] = mapped_column(String(300), nullable=True)  # private, never served publicly
+    status: Mapped[str] = mapped_column(String(20), default="requested", index=True)
+    fee_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    commission_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)  # MendMap's share, set when paid
+    currency: Mapped[str] = mapped_column(String(3), default="eur")
+    quote_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decline_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_intent: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    quoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    customer: Mapped[User] = relationship(foreign_keys=[customer_id], lazy="selectin")
+    worker: Mapped[User] = relationship(foreign_keys=[worker_id], lazy="selectin")
+
+
 NEW_COLUMNS = {
     "chat_messages": {"kind": "VARCHAR(20) NOT NULL DEFAULT 'message'", "event_id": "INTEGER"},
     "users": {"home_lat": "FLOAT", "home_lng": "FLOAT", "neighbourhood": "VARCHAR(60)", "rewards_paid": "INTEGER NOT NULL DEFAULT 0",
-              "auth_provider": "VARCHAR(20)"},
+              "auth_provider": "VARCHAR(20)", "stripe_account": "VARCHAR(60)", "payouts_ready": "INTEGER NOT NULL DEFAULT 0"},
     "reports": {
         "severity": "INTEGER", "after_photo_url": "VARCHAR(500)", "voice_url": "VARCHAR(500)", "voice_text": "TEXT",
         "claimed_by": "INTEGER", "claimed_at": "DATETIME", "fix_status": "VARCHAR(20)",

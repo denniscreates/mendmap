@@ -4,7 +4,7 @@ import * as Location from "expo-location";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, StyleSheet, View } from "react-native";
-import MapView, { Marker, Polyline } from "react-native-maps";
+import MapView, { Marker, Polyline } from "../../components/Map";
 import { Button, Input, MapPin, T } from "../../components/ui";
 import { photoUrl, type Job } from "../../lib/api";
 import { finishJob, loadJobs, startCrewSync, subscribeQueue, syncQueue, type Done } from "../../lib/crew";

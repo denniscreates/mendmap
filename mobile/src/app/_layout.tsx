@@ -10,6 +10,9 @@ import { AuthProvider } from "../lib/auth";
 import { startDraftSync } from "../lib/drafts";
 import { I18nProvider, useI18n } from "../lib/i18n";
 import { fonts, ThemeProvider, useTheme } from "../lib/theme";
+import { installWebAlert } from "../lib/webAlert";
+
+installWebAlert(); // browser: make "Are you sure?" dialogs work
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({ SpaceGrotesk_400Regular, SpaceGrotesk_500Medium });
@@ -42,6 +45,7 @@ function Root({ fontsLoaded }: { fontsLoaded: boolean }) {
       else if (data?.screen === "mjeshtrit") router.push("/mjeshtrit");
       else if (data?.screen === "report" && data.id) router.push(`/report/${data.id}`);
       else if (data?.screen === "event" && data.id) router.push(`/cleanup/${data.id}`);
+      else if (data?.screen === "booking" && data.id) router.push(`/booking/${data.id}`);
       else if (data?.screen === "chat" && data.room) router.push({ pathname: "/chat/[room]", params: { room: String(data.room) } });
     });
     return () => sub.remove();
@@ -77,6 +81,9 @@ function Root({ fontsLoaded }: { fontsLoaded: boolean }) {
           <Stack.Screen name="cleanup-new" options={{ title: t("cuNew"), presentation: "modal" }} />
           <Stack.Screen name="cleanup/[id]" options={{ title: t("cuTitle") }} />
           <Stack.Screen name="streets" options={{ title: t("stTitle") }} />
+          <Stack.Screen name="book" options={{ title: t("bkAsk"), presentation: "modal" }} />
+          <Stack.Screen name="bookings" options={{ title: t("bkTitle") }} />
+          <Stack.Screen name="booking/[id]" options={{ title: t("bkTitle") }} />
         </Stack>
       )}
       {(showIntro || !fontsLoaded) && <Intro onDone={() => setShowIntro(false)} />}

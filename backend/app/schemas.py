@@ -556,3 +556,60 @@ class SummaryOut(BaseModel):
     came_back: int
     top_areas: list[tuple[str, int]]
     top_streets: list[tuple[str, int]]
+
+
+# ---------- paid bookings ----------
+class BookingOut(BaseModel):
+    id: int
+    status: str  # requested, quoted, declined, cancelled, paid, done
+    description: str
+    address: str | None = None
+    report_id: int | None = None
+    has_photo: bool = False
+    fee_cents: int | None = None
+    commission_cents: int | None = None
+    worker_gets_cents: int | None = None
+    commission_rate: float = 0.10
+    currency: str = "eur"
+    quote_note: str | None = None
+    decline_note: str | None = None
+    customer_name: str
+    worker_name: str
+    mjeshter_id: int
+    skill: str | None = None
+    as_role: str  # customer or worker: which side the caller is on
+    created_at: datetime
+    quoted_at: datetime | None = None
+    paid_at: datetime | None = None
+    done_at: datetime | None = None
+
+
+class QuoteIn(BaseModel):
+    fee: float  # euros
+    note: str | None = Field(None, max_length=500)
+
+
+class NoteIn(BaseModel):
+    note: str | None = Field(None, max_length=500)
+
+
+class PayOut(BaseModel):
+    mode: str  # stripe or demo
+    client_secret: str | None = None
+    publishable_key: str | None = None
+    amount_cents: int
+    commission_cents: int
+    currency: str
+    merchant_country: str
+
+
+class PayoutsOut(BaseModel):
+    configured: bool  # Stripe keys are set on the server
+    demo: bool
+    started: bool
+    ready: bool
+    commission_rate: float
+
+
+class LinkOut(BaseModel):
+    url: str

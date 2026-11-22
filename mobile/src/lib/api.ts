@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import { Platform } from "react-native";
 import type { Status } from "./theme";
 
 /**
@@ -11,6 +12,8 @@ import type { Status } from "./theme";
 function resolveBaseUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_API_URL;
   if (fromEnv) return fromEnv.replace(/\/$/, "");
+  // In a browser (localhost:8081/login), the page's own dev server forwards /api to FastAPI.
+  if (Platform.OS === "web" && typeof window !== "undefined") return `${window.location.origin}/api`;
   const devServer = Constants.expoConfig?.hostUri; // LAN "192.168.1.5:8081" or tunnel "abc.on.expo.app"
   if (!devServer) return "http://localhost:8000";
   const isTunnel = !/:\d+$/.test(devServer); // tunnel hosts have no port and use https
@@ -33,6 +36,8 @@ export async function setToken(t: string | null) {
   else await AsyncStorage.removeItem(TOKEN_KEY);
 }
 export const setUnauthorizedHandler = (fn: () => void) => (onUnauthorized = fn);
+/** For images the server only shows to signed-in people (booking photos). */
+export const authHeaders = (): Record<string, string> => (token ? { Authorization: `Bearer ${token}` } : {});
 
 // ---------- types ----------
 export type User = {
@@ -286,6 +291,45 @@ export type TopReport = {
 /** A street or place suggestion for the report location. */
 export type Place = { name: string; detail: string | null; kind: "street" | "place"; latitude: number; longitude: number };
 
+// ---------- paid bookings ----------
+export type BookingStatus = "requested" | "quoted" | "declined" | "cancelled" | "paid" | "done";
+export type Booking = {
+  id: number;
+  status: BookingStatus;
+  description: string;
+  address: string | null;
+  report_id: number | null;
+  has_photo: boolean;
+  fee_cents: number | null;
+  commission_cents: number | null;
+  worker_gets_cents: number | null;
+  commission_rate: number;
+  currency: string;
+  quote_note: string | null;
+  decline_note: string | null;
+  customer_name: string;
+  worker_name: string;
+  mjeshter_id: number;
+  skill: string | null;
+  as_role: "customer" | "worker";
+  created_at: string;
+  quoted_at: string | null;
+  paid_at: string | null;
+  done_at: string | null;
+};
+export type NewBooking = { mjeshterId: number; description: string; photoUri: string; address?: string; reportId?: number; skill?: string };
+export type PayInfo = {
+  mode: "stripe" | "demo";
+  client_secret: string | null;
+  publishable_key: string | null;
+  amount_cents: number;
+  commission_cents: number;
+  currency: string;
+  merchant_country: string;
+};
+export type Payouts = { configured: boolean; demo: boolean; started: boolean; ready: boolean; commission_rate: number };
+export const bookingPhotoUrl = (id: number) => `${API_URL}/bookings/${id}/photo`;
+
 // ---------- community chat ----------
 export type ChatEvent = { id: number; title: string; starts_at: string; place: string; going: number; me_going: boolean; cancelled: boolean };
 export type ChatMessage = {
@@ -383,6 +427,27 @@ export const api = {
     request<Adoption>("/adoptions", { method: "POST", body: JSON.stringify({ street, sponsor: sponsor || null }) }),
   unadopt: (id: number) => request<null>(`/adoptions/${id}`, { method: "DELETE" }),
   top10: () => request<TopReport[]>("/public/top?days=30"),
+  bookings: (as?: "customer" | "worker") => request<Booking[]>(`/bookings${as ? `?as=${as}` : ""}`),
+  booking: (id: number) => request<Booking>(`/bookings/${id}`),
+  createBooking: (b: NewBooking) => {
+    const form = new FormData();
+    form.append("mjeshter_id", String(b.mjeshterId));
+    form.append("description", b.description);
+    form.append("photo", filePart(b.photoUri, "photo.jpg", imageType(b.photoUri)));
+    if (b.address) form.append("address", b.address);
+    if (b.reportId) form.append("report_id", String(b.reportId));
+    if (b.skill) form.append("skill", b.skill);
+    return request<Booking>("/bookings", { method: "POST", body: form });
+  },
+  quoteBooking: (id: number, fee: number, note?: string) =>
+    request<Booking>(`/bookings/${id}/quote`, { method: "POST", body: JSON.stringify({ fee, note: note || null }) }),
+  declineBooking: (id: number) => request<Booking>(`/bookings/${id}/decline`, { method: "POST", body: JSON.stringify({}) }),
+  cancelBooking: (id: number) => request<Booking>(`/bookings/${id}/cancel`, { method: "POST" }),
+  payBooking: (id: number) => request<PayInfo>(`/bookings/${id}/pay`, { method: "POST" }),
+  confirmBookingPayment: (id: number) => request<Booking>(`/bookings/${id}/confirm-payment`, { method: "POST" }),
+  bookingDone: (id: number) => request<Booking>(`/bookings/${id}/done`, { method: "POST" }),
+  payouts: () => request<Payouts>("/payouts/me"),
+  payoutsOnboard: () => request<{ url: string }>("/payouts/onboard", { method: "POST" }),
   chatRooms: () => request<ChatRoom[]>("/chat/rooms"),
   chatMessages: (r: string, q: { after?: number; before?: number } = {}) => {
     const p = new URLSearchParams();

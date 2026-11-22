@@ -2,7 +2,7 @@ import { router, Stack, useLocalSearchParams } from "expo-router";
 import { SKILL_ICON } from "../../lib/mjeshtrit";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
-import MapView, { Marker } from "react-native-maps";
+import MapView, { Marker } from "../../components/Map";
 import Animated, { FadeInDown, ZoomIn } from "react-native-reanimated";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";

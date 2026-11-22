@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, object_session, selectinload
 
-from . import ai, chat, community, geo, languages, mailer, photos, schemas
+from . import ai, bookings, chat, community, geo, languages, mailer, photos, schemas
 from .auth import JWT_SECRET, admin_user, create_token, current_user, hash_password, verify_password
 from .db import Base, SessionLocal, engine, get_db
 from .insights import (
@@ -67,6 +67,7 @@ app.include_router(chat.router)
 app.include_router(chat.admin_router)
 app.include_router(geo.router)
 app.include_router(community.router)
+app.include_router(bookings.router)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 UPLOADS.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOADS), name="uploads")

@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MendMap App Tour</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* MendMap brand (BRAND.md): navy night, blue pin, orange spark. Space Grotesk, regular + medium only.
+   Layout: one sticky iPhone on the left; the screen-by-screen story scrolls on the right and drives the phone. */
+:root {
+  --bg: #070d1f;
+  --surface: #0e1834;
+  --surface2: #18264a;
+  --line: #24335c;
+  --text: #e9edf7;
+  --muted: #8d9ab8;
+  --blue: #2f63f0;
+  --accent: #6d95ff;
+  --orange: #f26a2e;
+  --amber: #f5b638;
+  --font: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-weight: 400; line-height: 1.5; }
+b, strong { font-weight: 500; }
+h1, h2, h3 { font-weight: 500; text-wrap: balance; margin: 0; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+/* ---------- header ---------- */
+.top { max-width: 1180px; margin: 0 auto; padding: 48px 24px 24px; display: flex; gap: 20px; align-items: center; }
+.top svg { width: 46px; height: 58px; flex: none; filter: drop-shadow(0 0 14px #2f63f088); }
+.top h1 { font-size: clamp(30px, 4.4vw, 50px); line-height: 1.05; letter-spacing: -0.02em; }
+.top h1 span { color: var(--orange); }
+.top p { margin: 8px 0 0; color: var(--muted); max-width: 60ch; }
+
+/* ---------- main layout ---------- */
+.wrap { max-width: 1180px; margin: 0 auto; padding: 8px 24px 80px; display: grid; grid-template-columns: 380px 1fr; gap: 56px; align-items: start; }
+.stage { position: sticky; top: 24px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.now { text-align: center; min-height: 48px; }
+.now .n { font-family: var(--mono); color: var(--orange); font-size: 12px; letter-spacing: 0.08em; }
+.now h3 { font-size: 18px; }
+.nav { display: flex; gap: 10px; }
+.nav button { font: 500 14px var(--font); color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; cursor: pointer; }
+.nav button:hover { border-color: var(--accent); }
+.nav button:disabled { opacity: 0.4; cursor: default; border-color: var(--line); }
+
+.story { display: flex; flex-direction: column; gap: 10px; }
+.group { margin: 26px 0 4px; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 12px; }
+.group::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.group:first-child { margin-top: 0; }
+.card { display: grid; grid-template-columns: 44px 1fr; gap: 4px 16px; padding: 20px 22px; border-radius: 20px; border: 1px solid var(--line); background: transparent; cursor: pointer; transition: background .25s, border-color .25s; scroll-margin-top: 30vh; }
+.card:hover { border-color: #33467a; }
+.card.on { background: var(--surface); border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue) inset; }
+.num { grid-row: span 3; font-family: var(--mono); font-size: 13px; color: var(--muted); padding-top: 5px; }
+.card.on .num { color: var(--orange); }
+.card h2 { font-size: 22px; line-height: 1.2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.who { font-size: 12px; font-weight: 500; letter-spacing: 0.02em; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.who.res { color: var(--accent); border-color: #2f63f066; }
+.who.crew { color: var(--amber); border-color: #f5b63866; }
+.card p { margin: 4px 0 0; color: #c3cbe0; max-width: 62ch; }
+.card ul { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; max-width: 62ch; }
+.card li { position: relative; padding-left: 20px; color: var(--text); font-size: 15px; }
+.card li::before { content: ""; position: absolute; left: 2px; top: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); }
+.foot { max-width: 1180px; margin: 0 auto; padding: 0 24px 50px; color: var(--muted); font-size: 14px; }
+
+/* ---------- the iPhone ---------- */
+.phone { width: 340px; height: 708px; border-radius: 58px; padding: 12px; position: relative; flex: none;
+  background: linear-gradient(145deg, #4a5068, #1b1f2c 40%, #3b4156 70%, #161a25);
+  box-shadow: 0 40px 80px -30px #000, 0 0 0 1px #5a627c inset, 0 0 60px -10px #2f63f044; }
+.phone::before, .phone::after { content: ""; position: absolute; left: -3px; width: 3px; border-radius: 2px 0 0 2px; background: #3b4156; }
+.phone::before { top: 150px; height: 60px; }
+.phone::after { top: 225px; height: 60px; }
+.screen { width: 100%; height: 100%; border-radius: 47px; overflow: hidden; position: relative; background: var(--bg); }
+.island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 98px; height: 29px; border-radius: 20px; background: #000; z-index: 20; }
+.homebar { position: absolute; bottom: 7px; left: 50%; transform: translateX(-50%); width: 112px; height: 4px; border-radius: 3px; background: #e9edf7cc; z-index: 20; }
+
+.scr { position: absolute; inset: 0; display: flex; flex-direction: column; opacity: 0; visibility: hidden; transition: opacity .35s ease, visibility .35s; font-size: 12px; line-height: 1.35; }
+.scr.on { opacity: 1; visibility: visible; }
+.sb { height: 48px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 6px 30px 0 34px; font-size: 13px; font-weight: 500; }
+.sb i { font-style: normal; letter-spacing: 1px; font-size: 11px; }
+.hd { height: 40px; flex: none; display: flex; align-items: center; justify-content: center; position: relative; font-size: 14px; font-weight: 500; background: var(--surface); }
+.hd .bk { position: absolute; left: 12px; color: var(--accent); font-size: 18px; }
+.hd .hr { position: absolute; right: 14px; color: #4caf7a; }
+.bd { flex: 1; overflow: hidden; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.tb { height: 66px; flex: none; display: flex; justify-content: space-around; align-items: flex-start; padding-top: 7px; background: var(--surface); border-top: 1px solid var(--line); }
+.tb div { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 9px; font-weight: 500; color: var(--muted); width: 48px; text-align: center; }
+.tb div.on { color: var(--accent); }
+.tb svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tb .cam { background: var(--orange); border-radius: 11px; padding: 4px; color: #fff; margin-top: -2px; }
+.tb .cam svg { width: 18px; height: 18px; }
+
+/* bits used inside the screens */
+.m-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px; display: flex; gap: 10px; align-items: center; }
+.m-col { flex-direction: column; align-items: stretch; }
+.m-mut { color: var(--muted); font-size: 11px; }
+.m-h { font-weight: 500; font-size: 13px; }
+.m-big { font-weight: 500; font-size: 20px; }
+.m-btn { background: var(--blue); color: #fff; border-radius: 13px; padding: 10px; text-align: center; font-weight: 500; font-size: 13px; }
+.m-btn.o { background: var(--orange); }
+.m-btn.g { background: transparent; border: 1px solid var(--line); color: var(--text); }
+.m-pill { font-size: 10px; font-weight: 500; padding: 2px 7px; border-radius: 8px; white-space: nowrap; }
+.p-rep { background: #f26a2e26; color: var(--orange); }
+.p-prog { background: #f5b63826; color: var(--amber); }
+.p-fix { background: #6d95ff26; color: var(--accent); }
+.m-chip { font-size: 11px; padding: 5px 10px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); white-space: nowrap; }
+.m-chip.on { background: var(--orange); border-color: var(--orange); color: #fff; font-weight: 500; }
+.m-row { display: flex; gap: 6px; overflow: hidden; }
+.m-in { background: var(--surface2); border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px; color: var(--muted); }
+.m-ico { width: 34px; height: 34px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 15px; background: var(--surface2); }
+.photo { border-radius: 14px; position: relative; overflow: hidden;
+  background: radial-gradient(ellipse 30% 18% at 52% 58%, #0b0b0e 0 55%, #2a2a30 80%, transparent 100%),
+              repeating-linear-gradient(115deg, #4a4d55 0 3px, #44474f 3px 7px), #474a52; }
+.photo.fixed { background: repeating-linear-gradient(115deg, #3a3d45 0 3px, #363941 3px 7px), #383b43; }
+.photo .lane { position: absolute; left: 10%; right: 10%; top: 30%; height: 4px; background: repeating-linear-gradient(90deg, #e9e3c8 0 22px, transparent 22px 40px); opacity: .7; }
+.blurbox { position: absolute; border-radius: 6px; backdrop-filter: blur(4px); background: #ffffff22; border: 1px dashed #ffffff88; font-size: 9px; color: #fff; display: grid; place-items: center; }
+.ai { background: #2f63f01f; border: 1px solid #2f63f066; border-radius: 12px; padding: 8px 10px; display: flex; gap: 8px; align-items: flex-start; }
+.ai b { color: var(--accent); }
+.bub { max-width: 80%; padding: 7px 10px; border-radius: 15px; }
+.bub.th { background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 5px; align-self: flex-start; }
+.bub.me { background: var(--accent); color: #fff; border-bottom-right-radius: 5px; align-self: flex-end; }
+.bub .nm { color: var(--accent); font-weight: 500; font-size: 11px; }
+.tr { color: var(--accent); font-size: 10px; margin-top: 2px; }
+.dbox { width: 40px; height: 44px; border-radius: 10px; background: var(--orange); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; flex: none; }
+.dbox small { font-size: 8px; letter-spacing: .5px; }
+.dbox span { font-size: 17px; font-weight: 500; line-height: 1.1; }
+.bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 3px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); flex: none; }
+.otp { display: flex; gap: 7px; justify-content: center; }
+.otp span { width: 34px; height: 42px; border-radius: 10px; background: var(--surface2); border: 1px solid var(--line); display: grid; place-items: center; font-size: 18px; font-weight: 500; }
+.otp span.cur { border-color: var(--accent); }
+
+/* ---------- small screens: phone on top, list below ---------- */
+@media (max-width: 900px) {
+  .wrap { grid-template-columns: 1fr; gap: 24px; }
+  .stage { position: static; }
+  .card { scroll-margin-top: 16px; }
+}
+@media (max-width: 400px) {
+  .phone { transform: scale(.86); transform-origin: top center; margin-bottom: -100px; }
+  .top { padding-top: 28px; flex-direction: column; align-items: flex-start; }
+  .card { grid-template-columns: 1fr; padding: 18px; }
+  .num { grid-row: auto; padding: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scr, .card { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <svg viewBox="0 0 64 80" aria-hidden="true">
+    <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B6FF5"/><stop offset="1" stop-color="#1638B8"/></linearGradient></defs>
+    <path d="M32 2C16 2 4 14 4 29c0 19 24 46 28 49 4-3 28-30 28-49C60 14 48 2 32 2z" fill="url(#lg)"/>
+    <circle cx="32" cy="29" r="17" fill="#EEF1F7"/>
+    <path d="M38.5 18.5a7 7 0 0 0-8.6 8.9L21 36.3l3.7 3.7 8.9-8.9a7 7 0 0 0 8.9-8.6l-4 4-3.6-.4-.4-3.6z" fill="none" stroke="#F26A2E" stroke-width="3" stroke-linejoin="round"/>
+  </svg>
+  <div>
+    <h1>MendMap, screen by <span>screen</span></h1>
+    <p>A tour of every page in the app that Prishtina's residents use to report street problems and fix them with their neighbours. Scroll the list or tap a screen to see it on the phone.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="stage" id="stage">
+    <div class="phone" aria-label="iPhone showing the selected MendMap screen">
+      <div class="screen" id="screen">
+        <div class="island"></div>
+        <div class="homebar"></div>
+
+        <!-- 01 Sign in -->
+        <section class="scr" data-id="sign-in" data-tab="none">
+          <div class="bd" style="justify-content:center;align-items:center;gap:14px;padding:22px;text-align:center">
+            <svg viewBox="0 0 64 80" width="54" height="68" style="filter:drop-shadow(0 0 12px #2f63f088)"><use href="#pin"/></svg>
+            <div class="m-big" style="font-size:24px">MendMap</div>
+            <div class="m-mut" style="font-size:13px">Spot it. Snap it. Mended.</div>
+            <div style="width:100%;display:grid;gap:8px;margin-top:10px;text-align:left">
+              <div class="m-mut">Phone number</div>
+              <div class="m-in" style="color:var(--text)">+383 44 123 456</div>
+              <div class="m-mut" style="margin-top:6px">We sent you a code</div>
+              <div class="otp"><span>4</span><span>8</span><span>1</span><span class="cur">2</span><span></span><span></span></div>
+              <div class="m-btn" style="margin-top:10px">Continue</div>
+            </div>
+            <div class="m-row" style="margin-top:8px"><span class="m-chip on">Shqip</span><span class="m-chip">English</span></div>
+          </div>
+        </section>
+
+        <!-- 02 Map -->
+        <section class="scr" data-id="map" data-tab="map">
+          <div style="flex:1;position:relative;overflow:hidden;background:#0a1230">
+            <svg viewBox="0 0 316 560" preserveAspectRatio="xMidYMid slice" style="position:absolute;inset:0;width:100%;height:100%">
+              <rect width="316" height="560" fill="#0a1230"/>
+              <path d="M-10 420 C80 380 120 300 330 260" stroke="#13336b" stroke-width="14" fill="none"/>
+              <g stroke="#1c2a52" stroke-width="7" fill="none" stroke-linecap="round">
+                <path d="M30 -10 L90 580"/><path d="M180 -10 L150 580"/><path d="M-10 120 L330 170"/>
+                <path d="M-10 330 L330 300"/><path d="M250 -10 L300 580"/><path d="M-10 230 C100 210 200 240 330 220"/>
+              </g>
+              <g stroke="#152145" stroke-width="3" fill="none">
+                <path d="M60 -10 L120 580"/><path d="M-10 60 L330 90"/><path d="M-10 480 L330 470"/><path d="M215 -10 L225 580"/>
+                <path d="M-10 270 L330 260"/><path d="M110 -10 C100 200 140 400 110 580"/>
+              </g>
+              <rect x="190" y="360" width="70" height="60" rx="8" fill="#10264a"/>
+              <text x="225" y="394" text-anchor="middle" fill="#3e5486" font-size="9" font-family="Space Grotesk">Parku i Qytetit</text>
+              <text x="60" y="200" fill="#3e5486" font-size="10" font-family="Space Grotesk">ULPIANA</text>
+              <text x="190" y="150" fill="#3e5486" font-size="10" font-family="Space Grotesk">QENDRA</text>
+              <g stroke="#fff" stroke-width="2">
+                <circle cx="96" cy="150" r="8" fill="#f26a2e"/><circle cx="170" cy="210" r="8" fill="#f5b638"/>
+                <circle cx="240" cy="120" r="8" fill="#6d95ff"/><circle cx="70" cy="300" r="8" fill="#f26a2e"/>
+                <circle cx="210" cy="300" r="8" fill="#f26a2e"/><circle cx="140" cy="380" r="8" fill="#6d95ff"/>
+                <circle cx="270" cy="250" r="8" fill="#f5b638"/><circle cx="120" cy="250" r="11" fill="#f26a2e" stroke-width="3"/>
+              </g>
+            </svg>
+            <div style="position:absolute;top:50px;left:12px;right:12px;display:flex;gap:6px">
+              <span class="m-chip on">All</span><span class="m-chip">Reported</span><span class="m-chip">In progress</span><span class="m-chip">Fixed</span>
+            </div>
+            <div class="m-card" style="position:absolute;left:12px;right:12px;bottom:12px;background:#0e1834ee">
+              <div class="m-ico">🕳️</div>
+              <div style="flex:1"><div class="m-h">Pothole</div><div class="m-mut">Rr. Garibaldi · 12 people see this</div></div>
+              <span class="m-pill p-rep">Reported</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 03 Report -->
+        <section class="scr" data-id="report" data-tab="report" data-title="New report">
+          <div class="bd">
+            <div class="photo" style="height:150px">
+              <div class="lane"></div>
+              <div class="blurbox" style="right:14px;top:16px;width:46px;height:20px">plate</div>
+            </div>
+            <div class="ai"><span>✨</span><div><b>Looks like: Pothole · severity 4/5</b><div class="m-mut">Deep hole in the right lane, about 40 cm wide. The number plate was blurred.</div></div></div>
+            <div class="m-mut">Where is it?</div>
+            <div class="m-in" style="color:var(--text)">🔎 Garib|</div>
+            <div class="m-card m-col" style="padding:0;gap:0">
+              <div style="padding:8px 10px"><div class="m-h">Rruga Garibaldi</div><div class="m-mut">Qendra, Prishtina</div></div>
+              <div style="padding:8px 10px;border-top:1px solid var(--line)"><div class="m-h">Garibaldi 12</div><div class="m-mut">Qendra</div></div>
+            </div>
+            <div style="height:70px;border-radius:12px;background:#0a1230;position:relative;overflow:hidden">
+              <svg viewBox="0 0 280 70" style="width:100%;height:100%"><path d="M0 40 L280 30M90 0 L110 70M200 0 L190 70" stroke="#1c2a52" stroke-width="6"/></svg>
+              <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-80%);font-size:20px">📍</div>
+            </div>
+            <div class="m-btn o">Send to the city</div>
+          </div>
+        </section>
+
+        <!-- 04 Report details -->
+        <section class="scr" data-id="report-details" data-tab="map" data-title="Pothole" data-back="1">
+          <div class="bd">
+            <div style="height:140px;border-radius:14px;position:relative;overflow:hidden">
+              <div class="photo" style="position:absolute;inset:0;border-radius:0"><div class="lane"></div></div>
+              <div class="photo fixed" style="position:absolute;inset:0 0 0 50%;border-radius:0"></div>
+              <div style="position:absolute;left:50%;top:0;bottom:0;width:2px;background:#fff"></div>
+              <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:#fff;color:#070d1f;display:grid;place-items:center;font-size:12px">⇆</div>
+              <span class="m-pill" style="position:absolute;left:8px;bottom:8px;background:#000a;color:#fff">Before</span>
+              <span class="m-pill" style="position:absolute;right:8px;bottom:8px;background:#000a;color:#fff">After</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center"><div class="m-h" style="font-size:15px">Pothole · severity 4/5</div><span class="m-pill p-fix">Fixed</span></div>
+            <div class="m-row" style="flex-wrap:wrap"><span class="m-chip">🛣️ Rr. Garibaldi</span><span class="m-chip">💚 Shkolla Faik Konica</span><span class="m-chip" style="color:var(--orange)">↺ came back</span></div>
+            <div class="m-card m-col" style="gap:6px">
+              <div style="display:flex;gap:8px"><span class="dot"></span><span>Reported · 3 Nov</span></div>
+              <div style="display:flex;gap:8px"><span class="dot" style="background:var(--amber)"></span><span>In progress · 5 Nov</span></div>
+              <div style="display:flex;gap:8px"><span class="dot" style="background:var(--accent)"></span><span>Fixed by the city crew · 7 Nov</span></div>
+            </div>
+            <div class="m-mut" style="text-align:center">Is it really fixed?</div>
+            <div style="display:flex;gap:8px"><div class="m-btn" style="flex:1">👍 Yes</div><div class="m-btn g" style="flex:1">Not fixed</div></div>
+            <div class="m-btn g">💬 Share in chat</div>
+          </div>
+        </section>
+
+        <!-- 05 Fix & earn -->
+        <section class="scr" data-id="fix-and-earn" data-tab="fix" data-title="Fix &amp; earn">
+          <div class="bd">
+            <div class="m-card" style="background:var(--surface2)"><div style="font-size:24px">🛠️</div><div><div class="m-h">3 badges</div><div class="m-mut">Fix small things nearby and earn rewards.</div></div></div>
+            <div class="m-h" style="margin-top:4px">Jobs you can fix in Ulpiana</div>
+            <div class="m-card" style="border-color:#f26a2e88"><div class="m-ico">🗑️</div><div style="flex:1"><div class="m-h">Illegal dumping</div><div class="m-mut">Bags next to the bench · 180 m</div></div><span style="color:var(--orange);font-weight:500">I'll fix it</span></div>
+            <div class="m-card" style="border-color:#f26a2e88"><div class="m-ico">📍</div><div style="flex:1"><div class="m-h">Graffiti on a bin</div><div class="m-mut">Rr. Agim Ramadani · 350 m</div></div><span style="color:var(--orange);font-weight:500">I'll fix it</span></div>
+            <div class="m-card m-col" style="border-color:var(--blue)">
+              <div class="m-h">You're fixing: fallen sign</div>
+              <div class="m-mut">Take an "after" photo from the same spot. The AI compares it with the "before" photo.</div>
+              <div style="display:flex;gap:6px"><div class="photo" style="flex:1;height:54px"></div><div class="photo fixed" style="flex:1;height:54px"></div></div>
+              <div class="ai" style="padding:6px 8px"><span>✨</span><b>Looks fixed. +1 badge</b></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 06 Mjeshtri -->
+        <section class="scr" data-id="mjeshtri" data-tab="fix" data-title="Mjeshtri" data-back="1">
+          <div class="bd">
+            <div class="m-mut" style="font-size:12px">Skilled volunteers who fix things in the neighbourhood when the city doesn't work, like on Sundays.</div>
+            <div class="m-card m-col" style="background:var(--orange);border-color:var(--orange);color:#fff">
+              <div class="m-h">Become a mjeshtër</div>
+              <div style="font-size:11px;opacity:.92">Plumber, painter, builder, welder? Show proof of your skill and help your neighbourhood.</div>
+              <div style="background:#fff;color:var(--orange);border-radius:11px;padding:7px;text-align:center;font-weight:500">Sign up with proof</div>
+            </div>
+            <div class="m-card"><div class="m-ico">👷</div><div style="flex:1"><div class="m-h">Arben K. · Welder</div><div class="m-mut">Dardania · 14 jobs done</div></div><span class="m-pill p-fix">Verified</span></div>
+            <div class="m-card"><div class="m-ico">🧑‍🔧</div><div style="flex:1"><div class="m-h">Drita M. · Plumber</div><div class="m-mut">Ulpiana · Free on Sunday</div></div><span class="m-pill p-fix">Verified</span></div>
+            <div class="m-card"><div class="m-ico">🎨</div><div style="flex:1"><div class="m-h">Besnik H. · Painter</div><div class="m-mut">Arbëria · 6 jobs done</div></div><span class="m-pill p-prog">Being checked</span></div>
+          </div>
+        </section>
+
+        <!-- 07 Rewards -->
+        <section class="scr" data-id="rewards" data-tab="fix" data-title="Rewards" data-back="1">
+          <div class="bd">
+            <div class="m-mut" style="font-size:12px">Local partners thank fixers. Spend badges on a reward and show the code at the partner.</div>
+            <div class="m-card" style="justify-content:space-between"><span>Your badges</span><span class="m-big" style="color:var(--orange)">23</span></div>
+            <div class="m-card m-col">
+              <div style="display:flex;gap:10px;align-items:center"><div class="m-ico" style="width:44px;height:44px;font-size:22px">🍽️</div><div style="flex:1"><div class="m-h">Free dinner for 2</div><div class="m-mut">Zhuzuff Kitchen · 10 left</div></div><span class="m-pill p-rep">20 badges</span></div>
+              <div class="m-btn o">Get this reward</div>
+            </div>
+            <div class="m-card"><div class="m-ico">☕</div><div style="flex:1"><div class="m-h">Coffee on the house</div><div class="m-mut">Partner café · Qendra</div></div><span class="m-pill p-rep">5 badges</span></div>
+            <div class="m-card m-col" style="align-items:center;border-style:dashed">
+              <div class="m-mut">Your code</div>
+              <div style="font-family:var(--mono);font-size:20px;letter-spacing:3px">MM-7Q4K</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 08 Chat rooms -->
+        <section class="scr" data-id="chat-rooms" data-tab="chat" data-title="Community chat">
+          <div class="bd" style="gap:6px">
+            <div class="m-card" style="border-color:var(--blue)"><div class="m-ico" style="background:var(--blue)">🏙️</div><div style="flex:1"><div class="m-h">Prishtina · Whole city</div><div class="m-mut">City crew: Road on Garibaldi closed until 14:00</div></div><span class="dot"></span></div>
+            <div class="m-card"><div class="m-ico">🏠</div><div style="flex:1"><div class="m-h">Ulpiana <span class="m-mut">· your area</span></div><div class="m-mut">Clean-up on Saturday, who's in?</div></div><span class="dot"></span></div>
+            <div class="m-card"><div class="m-ico">🏘️</div><div style="flex:1"><div class="m-h">Dardania</div><div class="m-mut">The streetlight is back on 👍</div></div></div>
+            <div class="m-card"><div class="m-ico">🏘️</div><div style="flex:1"><div class="m-h">Qendra</div><div class="m-mut">Shared a report: Broken bench</div></div></div>
+            <div class="m-card"><div class="m-ico">🏘️</div><div style="flex:1"><div class="m-h">Bregu i Diellit</div><div class="m-mut">No messages yet</div></div></div>
+            <div class="m-card"><div class="m-ico">🏘️</div><div style="flex:1"><div class="m-h">Arbëria</div><div class="m-mut">Faleminderit për ndihmën!</div></div></div>
+          </div>
+        </section>
+
+        <!-- 09 Chat room -->
+        <section class="scr" data-id="chat-room" data-tab="chat" data-title="Ulpiana" data-back="1" data-right="leaf">
+          <div class="bd" style="gap:6px;justify-content:flex-end">
+            <div style="background:var(--blue);border-radius:14px;padding:9px 10px;color:#fff">
+              <div style="font-weight:500;font-size:11px">📣 City announcement</div>
+              <div>Water will be off in Ulpiana on Tuesday 09:00–12:00.</div>
+            </div>
+            <div class="bub th"><div class="nm">Lirie</div>A big pothole opened on Rr. Garibaldi again 😕<div class="tr">See translation</div></div>
+            <div class="m-card m-col" style="border:2px solid var(--accent);gap:3px">
+              <div class="m-h">🧹 Clean the park by the school</div>
+              <div class="m-mut">🕘 Sat 30 Nov, 10:00 · 📍 Parku Ulpiana</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px"><span style="color:var(--accent);font-weight:500">8 going</span><span class="m-pill" style="background:var(--orange);color:#fff;padding:5px 10px">I'm coming</span></div>
+            </div>
+            <div class="bub me">I'll bring gloves and bags!</div>
+            <div class="m-mut" style="text-align:center;font-size:10px">Be kind. No insults, ads or phone numbers.</div>
+          </div>
+          <div style="padding:8px 10px;display:flex;gap:8px;background:var(--surface);border-top:1px solid var(--line)"><div class="m-in" style="flex:1;border-radius:18px">Message</div><div class="m-ico" style="background:var(--orange);color:#fff">➤</div></div>
+        </section>
+
+        <!-- 10 Clean-up days -->
+        <section class="scr" data-id="clean-up-days" data-tab="settings" data-title="Clean-up days" data-back="1">
+          <div class="bd">
+            <div class="m-card" style="background:var(--surface2)"><div style="font-size:22px">🧹</div><div class="m-mut" style="color:var(--text)">Get together with your neighbours to clean a street or a park. Everyone who comes earns a badge.</div></div>
+            <div class="m-btn o">⊕ Organise one</div>
+            <div class="m-card"><div class="dbox"><small>SAT</small><span>30</span></div><div style="flex:1"><div class="m-h">Clean the park by the school</div><div class="m-mut">🕘 10:00 · Ulpiana</div></div><span style="color:var(--accent);font-weight:500">8 going</span></div>
+            <div class="m-card"><div class="dbox"><small>SUN</small><span>8</span></div><div style="flex:1"><div class="m-h">Leaves on Rr. Agim Ramadani</div><div class="m-mut">🕘 09:00 · Qendra</div></div><span style="color:var(--accent);font-weight:500">3 going</span></div>
+            <div class="m-mut" style="text-transform:uppercase;letter-spacing:.6px;margin-top:4px">Past</div>
+            <div class="m-card" style="opacity:.7"><div class="dbox" style="background:var(--surface2)"><small>SAT</small><span>16</span></div><div style="flex:1"><div class="m-h">Gërmia trail</div><div class="m-mut">14 came</div></div><span class="m-pill p-fix">Done</span></div>
+          </div>
+        </section>
+
+        <!-- 11 Clean-up day -->
+        <section class="scr" data-id="clean-up-day" data-tab="settings" data-title="Clean-up days" data-back="1">
+          <div class="bd">
+            <div style="background:var(--orange);border-radius:16px;padding:14px;text-align:center;color:#fff">
+              <div style="font-size:26px">🧹</div><div class="m-h" style="font-size:16px">Clean the park by the school</div><div style="font-size:11px;opacity:.9">Organised by Lirie · Ulpiana</div>
+            </div>
+            <div class="m-card m-col" style="gap:7px">
+              <div>🕘 <b>Sat 30 Nov, 10:00</b></div><div>📍 <b>Parku Ulpiana, main gate</b></div><div>👥 <b>8 going</b></div>
+              <div class="m-mut">Bring gloves if you have them. Bags are on us.</div>
+            </div>
+            <div class="m-btn o">✋ I'm coming</div>
+            <div class="m-card m-col" style="gap:6px">
+              <div class="m-h">Who came</div>
+              <div class="m-mut">The organiser ticks who came. Each gets a badge.</div>
+              <div>☑ Arta</div><div>☑ Besim</div><div>☐ Driton</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 12 My streets -->
+        <section class="scr" data-id="my-streets" data-tab="settings" data-title="My streets" data-back="1">
+          <div class="bd">
+            <div class="m-card" style="background:var(--surface2)"><div style="font-size:22px">💚</div><div class="m-mut" style="color:var(--text)">Adopt a street you care about. You get a notification for every new problem on it.</div></div>
+            <div class="m-card"><div class="m-ico" style="background:var(--accent);color:#fff">🪧</div><div style="flex:1"><div class="m-h">Rruga Garibaldi</div><div class="m-mut">Shkolla Faik Konica</div><div class="m-mut" style="color:var(--orange)">2 open problems</div></div><span class="m-mut">✕</span></div>
+            <div class="m-card"><div class="m-ico" style="background:var(--accent);color:#fff">🪧</div><div style="flex:1"><div class="m-h">Rr. Agim Ramadani</div><div class="m-mut">All good</div></div><span class="m-mut">✕</span></div>
+            <div class="m-card m-col">
+              <div class="m-h">Adopt a street</div>
+              <div class="m-in">🔎 Search a street</div>
+              <div class="m-in">School or business name (optional)</div>
+              <div class="m-btn o">♥ Adopt a street</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 13 City -->
+        <section class="scr" data-id="city" data-tab="city" data-title="City">
+          <div class="bd">
+            <div class="m-h" style="font-size:16px">How is the city doing?</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <div class="m-card m-col" style="gap:0"><span class="m-mut">Fix rate</span><span class="m-big" style="color:var(--accent)">64%</span></div>
+              <div class="m-card m-col" style="gap:0"><span class="m-mut">Avg. time to fix</span><span class="m-big">4.2 days</span></div>
+            </div>
+            <div class="m-h" style="margin-top:2px">🔥 Top 10 this month</div>
+            <div class="m-card" style="padding:8px"><b style="color:var(--orange);width:12px">1</b><div class="photo" style="width:34px;height:34px;border-radius:8px"></div><div style="flex:1"><div class="m-h" style="font-size:12px">Pothole</div><div class="m-mut">Rr. Garibaldi</div></div><span class="m-pill" style="background:var(--surface2);color:var(--text);padding:5px 8px">👀 41</span></div>
+            <div class="m-card" style="padding:8px"><b style="color:var(--orange);width:12px">2</b><div class="m-ico" style="width:34px;height:34px;border-radius:8px">💡</div><div style="flex:1"><div class="m-h" style="font-size:12px">Streetlight out</div><div class="m-mut">Dardania</div></div><span class="m-pill" style="background:var(--accent);color:#fff;padding:5px 8px">👀 27</span></div>
+            <div class="m-h" style="margin-top:2px">⏱️ How fast each area gets fixed</div>
+            <div class="m-card m-col" style="gap:8px">
+              <div><div style="display:flex;justify-content:space-between"><span>Qendra</span><span class="m-mut">2.1 days · 80% in a week</span></div><div class="bar"><i style="width:30%;background:var(--accent)"></i></div></div>
+              <div><div style="display:flex;justify-content:space-between"><span>Ulpiana</span><span class="m-mut">3.8 days · 66%</span></div><div class="bar"><i style="width:54%;background:var(--accent)"></i></div></div>
+              <div><div style="display:flex;justify-content:space-between"><span>Kalabria</span><span class="m-mut" style="color:var(--orange)">↺ 2 came back</span></div><div class="bar"><i style="width:92%;background:var(--accent)"></i></div></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 14 Settings -->
+        <section class="scr" data-id="settings" data-tab="settings" data-title="Settings">
+          <div class="bd" style="gap:6px">
+            <div class="m-card"><div class="m-ico" style="background:var(--blue);color:#fff;width:42px;height:42px">LB</div><div style="flex:1"><div class="m-h">Lirie B.</div><div class="m-mut">Ulpiana · resident</div></div></div>
+            <div class="m-card m-col" style="gap:6px"><div class="m-h">Badges</div><div class="m-row" style="flex-wrap:wrap"><span class="m-chip">First report</span><span class="m-chip">Got one mended</span><span class="m-chip">Good neighbour</span><span class="m-chip">Local hero</span></div></div>
+            <div class="m-card m-col" style="padding:0;gap:0">
+              <div style="padding:10px;display:flex;justify-content:space-between"><span>📋 My reports</span><span class="m-mut">7 ›</span></div>
+              <div style="padding:10px;display:flex;justify-content:space-between;border-top:1px solid var(--line)"><span>🪧 My streets</span><span class="m-mut">2 ›</span></div>
+              <div style="padding:10px;display:flex;justify-content:space-between;border-top:1px solid var(--line)"><span>🍃 Clean-up days</span><span class="m-mut">›</span></div>
+              <div style="padding:10px;display:flex;justify-content:space-between;border-top:1px solid var(--line)"><span>🔔 Near-you alerts</span><span style="width:30px;height:18px;border-radius:9px;background:var(--blue);display:inline-block"></span></div>
+              <div style="padding:10px;display:flex;justify-content:space-between;border-top:1px solid var(--line)"><span>🌐 Language</span><span class="m-mut">Shqip ›</span></div>
+              <div style="padding:10px;display:flex;justify-content:space-between;border-top:1px solid var(--line)"><span>🌙 Theme</span><span class="m-mut">Dark ›</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 15 Jobs (crew) -->
+        <section class="scr" data-id="crew-jobs" data-tab="jobs" data-title="Today's route">
+          <div class="bd">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <div class="m-card m-col" style="gap:0"><span class="m-mut">Open jobs</span><span class="m-big" style="color:var(--amber)">5</span></div>
+              <div class="m-card m-col" style="gap:0"><span class="m-mut">Fixed today</span><span class="m-big" style="color:var(--accent)">3</span></div>
+            </div>
+            <div class="m-card"><b style="width:18px;height:18px;border-radius:50%;background:var(--amber);color:#070d1f;display:grid;place-items:center;font-size:10px">1</b><div style="flex:1"><div class="m-h">🕳️ Pothole</div><div class="m-mut">Rr. Garibaldi · 0.4 km</div></div><span class="m-pill p-prog">In progress</span></div>
+            <div class="m-card"><b style="width:18px;height:18px;border-radius:50%;background:var(--amber);color:#070d1f;display:grid;place-items:center;font-size:10px">2</b><div style="flex:1"><div class="m-h">💡 Streetlight</div><div class="m-mut">Dardania · 1.2 km</div></div><span class="m-pill p-prog">In progress</span></div>
+            <div class="m-card m-col" style="border-color:var(--accent)">
+              <div class="m-h">Finish job 1</div>
+              <div class="photo fixed" style="height:60px"></div>
+              <div class="m-in">Pothole filled and sealed</div>
+              <div class="m-btn">✓ Mark as fixed</div>
+            </div>
+            <div class="m-mut" style="text-align:center">1 finished job waiting for signal</div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <div class="now" aria-live="polite"><div class="n" id="now-n">01 / 15</div><h3 id="now-t">Sign in</h3></div>
+    <div class="nav"><button id="prev" type="button">‹ Previous</button><button id="next" type="button">Next ›</button></div>
+  </div>
+
+  <div class="story" id="story">
+    <div class="group">Getting in</div>
+    <article class="card" data-id="sign-in" tabindex="0">
+      <div class="num">01</div>
+      <h2>Sign in <span class="who">Everyone</span></h2>
+      <p>The first screen after the intro animation. You sign up with your phone number and a one-time code, with no password to remember.</p>
+      <ul>
+        <li>The language is picked from the country you are in, from your IP address: English plus that country's own language.</li>
+        <li>You can switch between the two at any time.</li>
+      </ul>
+    </article>
+
+    <div class="group">Reporting a problem</div>
+    <article class="card" data-id="map" tabindex="0">
+      <div class="num">02</div>
+      <h2>Map <span class="who">Everyone</span></h2>
+      <p>The home tab. Every report in Prishtina is a pin, coloured by status: orange for reported, amber for in progress, blue for fixed.</p>
+      <ul>
+        <li>Filter the pins by status.</li>
+        <li>Tap a pin to see what it is, where, and how many people see it too.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="report" tabindex="0">
+      <div class="num">03</div>
+      <h2>New report <span class="who res">Residents</span></h2>
+      <p>The orange camera tab. Snap a photo and the AI checks that it shows a street problem, guesses the category and severity, and writes the description for you.</p>
+      <ul>
+        <li>Faces and number plates are blurred automatically before anything is saved.</li>
+        <li>Type the street name and pick a suggestion, or move the map so the pin in the centre is on the exact spot.</li>
+        <li>If you adopted the street, or neighbours did, they get a notification.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="report-details" tabindex="0">
+      <div class="num">04</div>
+      <h2>Report details <span class="who">Everyone</span></h2>
+      <p>Everything about one problem: photo, street, status history, and a before and after slider once it is fixed.</p>
+      <ul>
+        <li>Tap "I see this too" to push it up the city's Top 10.</li>
+        <li>Chips show the street, who adopted it, and "came back" if the same problem was fixed here in the last 90 days.</li>
+        <li>The person who reported it confirms the fix. "Not fixed" reopens the report.</li>
+        <li>Share it into the community chat in one tap.</li>
+      </ul>
+    </article>
+
+    <div class="group">Fixing it together</div>
+    <article class="card" data-id="fix-and-earn" tabindex="0">
+      <div class="num">05</div>
+      <h2>Fix &amp; earn <span class="who res">Residents</span></h2>
+      <p>Small jobs that a neighbour can safely do, like picking up dumped bags. The AI decides which reports qualify.</p>
+      <ul>
+        <li>Tap "I'll fix it" to claim a job so nobody else goes.</li>
+        <li>Take an "after" photo. The AI compares it with the "before" photo and gives you a badge if it is really fixed.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="mjeshtri" tabindex="0">
+      <div class="num">06</div>
+      <h2>Mjeshtri <span class="who res">Residents</span></h2>
+      <p>Skilled volunteers (plumbers, welders, painters) who take the bigger jobs, such as a broken bench or a loose railing, especially when the city is off on Sundays.</p>
+      <ul>
+        <li>Sign up by sending proof of your skill. The AI checks the document, and the city can approve it too.</li>
+        <li>Each mjeshtër shows their trade, area, jobs done and whether they are free on Sunday.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="rewards" tabindex="0">
+      <div class="num">07</div>
+      <h2>Rewards <span class="who res">Residents</span></h2>
+      <p>Local partners thank the people who fix things. Badges you earned are spent here.</p>
+      <ul>
+        <li>For example, Zhuzuff Kitchen gives a free dinner for two for 20 badges.</li>
+        <li>You get a code to show at the partner.</li>
+      </ul>
+    </article>
+
+    <div class="group">Community</div>
+    <article class="card" data-id="chat-rooms" tabindex="0">
+      <div class="num">08</div>
+      <h2>Community chat <span class="who">Everyone</span></h2>
+      <p>One room for the whole city and one for each of the 11 neighbourhoods. Your own neighbourhood is marked, and a dot shows new messages.</p>
+      <ul>
+        <li>City announcements reach every room.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="chat-room" tabindex="0">
+      <div class="num">09</div>
+      <h2>Chat room <span class="who">Everyone</span></h2>
+      <p>A normal group chat with a few city-specific parts: blue announcement banners, clean-up day cards with an "I'm coming" button, and shared reports.</p>
+      <ul>
+        <li>"See translation" translates any message into your language.</li>
+        <li>The AI blocks insults, ads and phone numbers before they are posted.</li>
+        <li>Long-press to report a message. Three reports hide it.</li>
+        <li>The leaf button at the top opens this neighbourhood's clean-up days.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="clean-up-days" tabindex="0">
+      <div class="num">10</div>
+      <h2>Clean-up days <span class="who res">Residents</span></h2>
+      <p>Neighbours meet to clean a street or a park. Anyone can organise one by picking the day, hour, meeting point and neighbourhood.</p>
+      <ul>
+        <li>Everyone in that neighbourhood gets a notification, and a card appears in its chat.</li>
+        <li>People who are coming get a reminder the day before.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="clean-up-day" tabindex="0">
+      <div class="num">11</div>
+      <h2>One clean-up day <span class="who res">Residents</span></h2>
+      <p>The details of one day: when, where (tap to open the map), how many are coming, and the organiser's notes.</p>
+      <ul>
+        <li>Tap "I'm coming", or change your mind later.</li>
+        <li>Afterwards, the organiser ticks who came and each of them gets a badge.</li>
+        <li>If it is cancelled, everyone who was coming is told.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="my-streets" tabindex="0">
+      <div class="num">12</div>
+      <h2>My streets <span class="who res">Residents</span></h2>
+      <p>Adopt up to five streets you care about and get a notification for every new problem on them.</p>
+      <ul>
+        <li>A school or business can adopt a street under its own name, and that name shows on the street's reports.</li>
+        <li>Each street shows how many problems are still open.</li>
+      </ul>
+    </article>
+
+    <div class="group">The city</div>
+    <article class="card" data-id="city" tabindex="0">
+      <div class="num">13</div>
+      <h2>City <span class="who">Everyone</span></h2>
+      <p>The public scoreboard for how Prishtina is doing: fix rate, fixed and in-progress counts, and the average time to fix.</p>
+      <ul>
+        <li>Top 10 this month: the problems most people see, with a vote button.</li>
+        <li>How fast each neighbourhood gets fixed, and how many problems came back.</li>
+        <li>Jobs you can fix in your area, and what is happening near your home.</li>
+      </ul>
+    </article>
+    <article class="card" data-id="settings" tabindex="0">
+      <div class="num">14</div>
+      <h2>Settings <span class="who">Everyone</span></h2>
+      <p>Your profile and badges, plus the way into your own reports, adopted streets and clean-up days.</p>
+      <ul>
+        <li>Near-you alerts for problems around your home.</li>
+        <li>Language and light or dark theme.</li>
+      </ul>
+    </article>
+
+    <div class="group">For city crews</div>
+    <article class="card" data-id="crew-jobs" tabindex="0">
+      <div class="num">15</div>
+      <h2>Jobs <span class="who crew">City crew</span></h2>
+      <p>Crew accounts see today's route instead of the report button: every report the city set to "in progress", in driving order.</p>
+      <ul>
+        <li>Finish a job with an "after" photo and a comment for the resident.</li>
+        <li>Works without signal: finished jobs wait and send when the phone is back online.</li>
+      </ul>
+    </article>
+  </div>
+</main>
+
+<p class="foot">The city also has a web dashboard for officials, where they moderate the chat, review flagged reports and read a weekly AI summary. It is not part of the phone app. The screens above use example data.</p>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="lg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B6FF5"/><stop offset="1" stop-color="#1638B8"/></linearGradient>
+    <g id="pin">
+      <path d="M32 2C16 2 4 14 4 29c0 19 24 46 28 49 4-3 28-30 28-49C60 14 48 2 32 2z" fill="url(#lg2)"/>
+      <circle cx="32" cy="29" r="17" fill="#EEF1F7"/>
+      <path d="M38.5 18.5a7 7 0 0 0-8.6 8.9L21 36.3l3.7 3.7 8.9-8.9a7 7 0 0 0 8.9-8.6l-4 4-3.6-.4-.4-3.6z" fill="none" stroke="#F26A2E" stroke-width="3" stroke-linejoin="round"/>
+    </g>
+  </defs>
+</svg>
+
+<script>
+(() => {
+  const ICON = {
+    map: '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/>',
+    camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+    fix: '<path d="M13 4l7 7-3 3-7-7zM10 7 3.5 13.5l3 3L13 10"/>',
+    chat: '<path d="M4 5h12v9H9l-5 4z"/><path d="M19 9h1v10l-3-2h-6v-1"/>',
+    city: '<path d="M5 20V11M12 20V4M19 20v-6"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',
+    jobs: '<path d="M15 4a5 5 0 0 0-6 6L4 15l3 3 5-5a5 5 0 0 0 6-6l-3 3-2.5-.5L12 7z"/>',
+  };
+  const svg = (k) => `<svg viewBox="0 0 24 24">${ICON[k]}</svg>`;
+  const RESIDENT = [["map", "Map"], ["report", "Report"], ["fix", "Fix & earn"], ["chat", "Chat"], ["city", "City"], ["settings", "Settings"]];
+  const CREW = [["jobs", "Jobs"], ["map", "Map"], ["chat", "Chat"], ["city", "City"], ["settings", "Settings"]];
+
+  const screens = [...document.querySelectorAll(".scr")];
+  for (const s of screens) {
+    const tab = s.dataset.tab;
+    s.insertAdjacentHTML("afterbegin", '<div class="sb"><span>9:41</span><i>▂▄▆ ᯤ ▮</i></div>');
+    if (s.dataset.title) {
+      const bk = s.dataset.back ? '<span class="bk">‹</span>' : "";
+      const hr = s.dataset.right === "leaf" ? '<span class="hr">🍃</span>' : "";
+      s.querySelector(".sb").insertAdjacentHTML("afterend", `<div class="hd">${bk}${s.dataset.title}${hr}</div>`);
+    }
+    if (tab !== "none") {
+      const tabs = tab === "jobs" ? CREW : RESIDENT;
+      const html = tabs.map(([k, label]) => k === "report"
+        ? `<div><span class="cam">${svg("camera")}</span>${label}</div>`
+        : `<div class="${k === tab ? "on" : ""}">${svg(k)}${label}</div>`).join("");
+      s.insertAdjacentHTML("beforeend", `<nav class="tb" aria-hidden="true">${html}</nav>`);
+    }
+  }
+
+  const cards = [...document.querySelectorAll(".card")];
+  const ids = cards.map((c) => c.dataset.id);
+  const nowN = document.getElementById("now-n");
+  const nowT = document.getElementById("now-t");
+  const prev = document.getElementById("prev");
+  const next = document.getElementById("next");
+  const narrow = matchMedia("(max-width: 900px)");
+  let current = -1;
+
+  function show(i) {
+    if (i === current || i < 0 || i >= ids.length) return;
+    current = i;
+    screens.forEach((s) => s.classList.toggle("on", s.dataset.id === ids[i]));
+    cards.forEach((c, j) => c.classList.toggle("on", j === i));
+    nowN.textContent = `${String(i + 1).padStart(2, "0")} / ${ids.length}`;
+    nowT.textContent = cards[i].querySelector("h2").firstChild.textContent.trim();
+    prev.disabled = i === 0;
+    next.disabled = i === ids.length - 1;
+    if (location.hash.slice(1) !== ids[i]) history.replaceState(null, "", "#" + ids[i]);
+  }
+
+  // Picking a screen by hand: on a narrow screen, bring the phone into view.
+  let lock = 0;
+  function pick(i, fromCard) {
+    lock = Date.now();
+    show(i);
+    if (narrow.matches) document.getElementById("stage").scrollIntoView({ behavior: "smooth", block: "start" });
+    else if (!fromCard) cards[i].scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  cards.forEach((c, i) => {
+    c.addEventListener("click", () => pick(i, true));
+    c.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(i, true); } });
+  });
+  prev.addEventListener("click", () => pick(current - 1));
+  next.addEventListener("click", () => pick(current + 1));
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest && e.target.closest("input,textarea")) return;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown" && e.altKey) pick(current + 1);
+    if (e.key === "ArrowLeft") pick(current - 1);
+  });
+
+  // On wide screens, the card in the middle of the window drives the phone.
+  const io = new IntersectionObserver((entries) => {
+    if (narrow.matches || Date.now() - lock < 900) return;
+    for (const e of entries) if (e.isIntersecting) show(cards.indexOf(e.target));
+  }, { rootMargin: "-45% 0px -50% 0px" });
+  cards.forEach((c) => io.observe(c));
+
+  function fromHash() {
+    const i = ids.indexOf(location.hash.slice(1));
+    if (i >= 0 && i !== current) { pick(i); return true; }
+    return false;
+  }
+  window.addEventListener("hashchange", fromHash);
+  show(0);
+  if (location.hash) {
+    const i = ids.indexOf(location.hash.slice(1));
+    if (i > 0) { current = -1; show(i); setTimeout(() => cards[i].scrollIntoView({ block: "center" }), 50); }
+  }
+})();
+</script>
+</body>
+</html>
