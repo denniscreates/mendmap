@@ -8,7 +8,7 @@ import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Modal,
 import MapView from "../../components/Map";
 import { VoiceRecorder } from "../../components/media";
 import { Button, Input, MapPin, StatusPill, T, useTimeAgo } from "../../components/ui";
-import { api, ApiError, photoUrl, type Category, type PhotoCheck, type Place, type Report } from "../../lib/api";
+import { api, ApiError, MAX_PHOTOS, photoUrl, type Category, type PhotoCheck, type Place, type Report } from "../../lib/api";
 import { addDraft, subscribeDrafts, syncDrafts, type Draft } from "../../lib/drafts";
 import { categoryKey, useI18n, type TKey } from "../../lib/i18n";
 import { darkMapStyle } from "../../lib/mapStyle";
@@ -26,7 +26,8 @@ export default function NewReport() {
   const s = useStyles(makeStyles);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryId, setCategoryId] = useState<number | null>(null);
-  const [photo, setPhoto] = useState<string | null>(null);
+  const [shots, setShots] = useState<string[]>([]); // the photos, the first one is the cover
+  const photo = shots[0] ?? null;
   const [note, setNote] = useState("");
   const [coords, setCoords] = useState<Coords | null>(null);
   const [mapTouch, setMapTouch] = useState(false);
@@ -139,18 +140,31 @@ export default function NewReport() {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) return Alert.alert(t("camera"), t("cameraPerm"));
     }
-    const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ["images"], quality: 0.6, allowsEditing: true, aspect: [4, 3] };
-    const res = fromCamera ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
-    if (!res.canceled) void applyPhoto(res.assets[0].uri);
+    const room = MAX_PHOTOS - shots.length;
+    if (room <= 0) return;
+    // The camera crops one photo to 4:3; the gallery lets people pick several at once (no cropping then).
+    const res = fromCamera
+      ? await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.6, allowsEditing: true, aspect: [4, 3] })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.6, allowsMultipleSelection: true, selectionLimit: room, orderedSelection: true });
+    if (!res.canceled) void applyPhotos([...shots, ...res.assets.map((a) => a.uri)].slice(0, MAX_PHOTOS));
+  };
+  const removeShot = (uri: string) => {
+    const rest = shots.filter((u) => u !== uri);
+    if (rest.length) void applyPhotos(rest);
+    else {
+      setShots([]);
+      setCheck(null);
+    }
   };
 
-  // AI check: suggests a category and severity, and flags photos that don't show a street problem.
-  const applyPhoto = async (uri: string) => {
-    setPhoto(uri);
+  // AI check of all the photos together: writes the description, suggests a category and severity,
+  // and flags photos that don't show a street problem.
+  const applyPhotos = async (uris: string[]) => {
+    setShots(uris);
     setCheck(null);
     setChecking(true);
     try {
-      const r = await api.checkPhoto(uri, lang);
+      const r = await api.checkPhoto(uris, lang);
       setCheck(r);
       if (r.available && r.is_street_problem) {
         if (r.severity) setSeverity(r.severity);
@@ -177,7 +191,7 @@ export default function NewReport() {
   const rejected = !!check?.available && (check.is_street_problem === false || !!fakeKind);
 
   const reset = () => {
-    setPhoto(null);
+    setShots([]);
     setStreet("");
     setPlaces(null);
     setNote("");
@@ -197,6 +211,7 @@ export default function NewReport() {
     description: note.trim() || undefined,
     address: street.trim() || undefined,
     photoUri: photo,
+    morePhotos: shots.slice(1),
     voiceUri: voice,
     severity,
   });
@@ -292,11 +307,37 @@ export default function NewReport() {
           <T style={[s.required, !!photo && { color: colors.fixed }]}>{photo ? "✓" : "*"}</T>
         </View>
         {photo ? (
-          <View>
-            <Image source={{ uri: photo }} style={s.photo} />
-            <Pressable style={s.retake} onPress={() => { setPhoto(null); setCheck(null); }} accessibilityLabel="Remove photo">
-              <Ionicons name="close" color="#fff" size={18} />
-            </Pressable>
+          <View style={{ gap: 8 }}>
+            <View>
+              <Image source={{ uri: photo }} style={s.photo} />
+              <Pressable style={s.retake} onPress={() => removeShot(photo)} accessibilityLabel={t("removePhoto")}>
+                <Ionicons name="close" color="#fff" size={18} />
+              </Pressable>
+            </View>
+            {/* More photos: other angles or a close-up help the AI and the crew judge the problem. */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.thumbs}>
+              {shots.slice(1).map((u) => (
+                <View key={u}>
+                  <Pressable onPress={() => void applyPhotos([u, ...shots.filter((x) => x !== u)])} accessibilityLabel={t("makeCover")}>
+                    <Image source={{ uri: u }} style={s.thumb} />
+                  </Pressable>
+                  <Pressable style={s.thumbX} onPress={() => removeShot(u)} hitSlop={6} accessibilityLabel={t("removePhoto")}>
+                    <Ionicons name="close" color="#fff" size={13} />
+                  </Pressable>
+                </View>
+              ))}
+              {shots.length < MAX_PHOTOS && (
+                <>
+                  <Pressable style={s.addThumb} onPress={() => pickPhoto(true)} accessibilityLabel={t("takePhoto")}>
+                    <Ionicons name="camera" size={22} color={colors.orange} />
+                  </Pressable>
+                  <Pressable style={s.addThumb} onPress={() => pickPhoto(false)} accessibilityLabel={t("fromGallery")}>
+                    <Ionicons name="images" size={20} color={colors.muted} />
+                  </Pressable>
+                </>
+              )}
+            </ScrollView>
+            <T style={s.hint}>{t("morePhotosHint", { n: shots.length, max: MAX_PHOTOS })}</T>
             {checking && (
               <View style={s.aiBox}>
                 <ActivityIndicator size="small" color={colors.accent} />
@@ -545,6 +586,10 @@ const makeStyles = (c: Palette) =>
     },
     photo: { width: "100%", aspectRatio: 4 / 3, borderRadius: 16, backgroundColor: c.surface },
     retake: { position: "absolute", top: 10, right: 10, backgroundColor: "#000a", borderRadius: 999, padding: 6 },
+    thumbs: { gap: 8, paddingRight: 8 },
+    thumb: { width: 72, height: 72, borderRadius: 12, backgroundColor: c.surface },
+    thumbX: { position: "absolute", top: 4, right: 4, backgroundColor: "#000a", borderRadius: 999, padding: 3 },
+    addThumb: { width: 72, height: 72, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: c.line, alignItems: "center", justifyContent: "center" },
     cats: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
     cat: {
       width: "48%", flexGrow: 1, flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: 14,

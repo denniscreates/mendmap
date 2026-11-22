@@ -262,3 +262,12 @@ ul.flags { margin: 0 0 4px; padding-left: 18px; }
 .chat-card p { margin: 6px 0 10px; white-space: pre-wrap; }
 .chat-card.is-hidden { opacity: .6; }
 .tag.bad { color: #fff; background: #d64545; }
+
+/* bookings */
+.bk-card.disputed { border-color: #d64545; }
+.bk-card.paid { border-color: var(--accent); }
+.bk-problem { background: rgba(214, 69, 69, .12); border-radius: 10px; padding: 8px 10px; }
+.card b.earned { color: var(--accent); }
+.card small { display: block; margin-top: 4px; }
+.more-photos { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.more-photos img { width: 84px; height: 84px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }

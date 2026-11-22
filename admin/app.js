@@ -122,6 +122,8 @@ function render() {
   else refreshMjBadge();
   if (state.view === "chat") renderChat();
   else refreshChatBadge();
+  if (state.view === "bookings") renderBookings();
+  else refreshBookingBadge();
   const waiting = state.reports.filter((r) => r.fix_status === "pending").length;
   $("#fix-badge").textContent = waiting;
   $("#fix-badge").classList.toggle("hidden", !waiting);
@@ -427,6 +429,8 @@ async function openReport(id) {
     <h2>${icon(r.category)} ${esc(r.category.name)}</h2>
     ${pill(r.status)}
     ${r.photo_url ? `<a href="${esc(API + r.photo_url)}" target="_blank" rel="noopener"><img class="photo" src="${esc(API + r.photo_url)}" alt="Report photo"></a>` : '<div class="nophoto muted">No photo</div>'}
+    ${(r.photos || []).length > 1 ? `<div class="more-photos">${r.photos.slice(1).map((u) => `<a href="${esc(API + u)}" target="_blank" rel="noopener"><img src="${esc(API + u)}" alt="More photos"></a>`).join("")}</div>` : ""}
+    ${r.edited_at ? `<p class="muted">✎ Edited by the reporter ${ago(r.edited_at)}</p>` : ""}
     ${r.after_photo_url ? `<p><a href="${esc(API + r.after_photo_url)}" target="_blank" rel="noopener">Photo of the finished work ↗</a></p>` : ""}
     <p>${esc(r.description) || '<span class="muted">No description</span>'}
       ${r.ai_description && r.ai_description === r.description ? '<br><small class="muted">✨ Written by AI from the photo</small>' : ""}</p>
@@ -688,6 +692,90 @@ $("#ann-form").addEventListener("submit", async (e) => {
   } catch (err) {
     $("#ann-msg").textContent = err.message;
   }
+});
+
+// ---------- paid bookings: held money, problems, payouts and refunds ----------
+const BK_LABEL = {
+  requested: "Waiting for a price", quoted: "Price sent", declined: "Declined", cancelled: "Cancelled",
+  paid: "💰 Paid, money held", disputed: "⚠️ Problem reported", done: "✓ Paid out", refunded: "↩ Refunded",
+};
+const eur = (cents, cur = "eur") => cents == null ? "—" : new Intl.NumberFormat("en-IE", { style: "currency", currency: cur.toUpperCase() }).format(cents / 100);
+async function refreshBookingBadge() {
+  try {
+    const s = await api("/admin/bookings/summary");
+    $("#bk-badge").textContent = s.disputed;
+    $("#bk-badge").classList.toggle("hidden", !s.disputed);
+    return s;
+  } catch { return null; }
+}
+async function renderBookings() {
+  const s = await refreshBookingBadge();
+  if (s) {
+    $("#bk-days").textContent = s.auto_release_days;
+    $("#bk-mode").innerHTML = s.stripe ? "Payments: <b>Stripe</b>. Payouts and refunds here move real money (or test money with test keys)."
+      : s.demo ? "Payments: <b>test mode</b>. No real money moves; buttons only change the booking." : "Payments are switched off on this server.";
+    $("#bk-cards").innerHTML = `
+      <div class="card"><span class="muted">MendMap earned (${Math.round(s.commission_rate * 100)}%)</span><b class="earned">${eur(s.earned_cents, s.currency)}</b><small class="muted">${s.done} finished jobs</small></div>
+      <div class="card"><span class="muted">Held now</span><b>${eur(s.held_cents, s.currency)}</b><small class="muted">${s.held} jobs</small></div>
+      <div class="card"><span class="muted">Problems to decide</span><b class="${s.disputed ? "owed" : ""}">${s.disputed}</b></div>
+      <div class="card"><span class="muted">Paid to mjeshtrit</span><b>${eur(s.paid_out_cents, s.currency)}</b></div>
+      <div class="card"><span class="muted">Refunded</span><b>${eur(s.refunded_cents, s.currency)}</b><small class="muted">${s.refunded} jobs</small></div>`;
+  }
+  const status = $("#bk-filter").value;
+  const rows = await api(`/admin/bookings${status ? `?status=${encodeURIComponent(status)}` : ""}`);
+  $("#bk-empty").classList.toggle("hidden", rows.length > 0);
+  $("#bk-list").innerHTML = rows.map((b) => {
+    const held = b.status === "paid" || b.status === "disputed";
+    return `
+    <div class="chat-card bk-card ${b.status}">
+      <div class="chat-meta">
+        <b>#${b.id}</b> <span class="tag ${b.status === "disputed" ? "bad" : ""}">${BK_LABEL[b.status] || esc(b.status)}</span>
+        <b>${eur(b.fee_cents, b.currency)}</b>
+        ${b.commission_cents != null && b.status !== "refunded" ? `<span class="muted">MendMap ${eur(b.commission_cents, b.currency)} · mjeshtër ${eur(b.worker_gets_cents, b.currency)}</span>` : ""}
+        ${b.pay_mode === "demo" ? '<span class="tag">test</span>' : ""}
+        <span class="muted">· ${ago(b.created_at)}</span>
+      </div>
+      <div class="muted">Resident: ${esc(b.customer_name)} (${esc(b.customer_email || "")}) → Mjeshtër: ${esc(b.worker_name)} (${esc(b.worker_email || "")})</div>
+      <p>${esc(b.description)}${b.address ? ` <span class="muted">📍 ${esc(b.address)}</span>` : ""}</p>
+      ${b.problem_note ? `<p class="bk-problem">⚠️ Resident: “${esc(b.problem_note)}”</p>` : ""}
+      ${b.status === "paid" ? `<p class="muted">${b.worker_done_at ? `The mjeshtër finished ${ago(b.worker_done_at)}. Sent automatically ${b.auto_release_at ? `on ${new Date(b.auto_release_at + "Z").toLocaleString()}` : "soon"} unless the resident reports a problem.` : "Waiting for the mjeshtër to finish the job."}</p>` : ""}
+      ${b.admin_note ? `<p class="muted">Your note: ${esc(b.admin_note)}</p>` : ""}
+      <div class="fix-actions">
+        ${b.has_photo ? `<button class="btn ghost" data-bkphoto="${b.id}">View photo</button>` : ""}
+        ${held ? `<button class="btn primary" data-bkrelease="${b.id}" data-name="${esc(b.worker_name)}" data-amount="${eur(b.worker_gets_cents, b.currency)}">Pay the mjeshtër</button>
+        <button class="btn danger" data-bkrefund="${b.id}" data-amount="${eur(b.fee_cents, b.currency)}">Refund the resident</button>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+$("#bk-filter").addEventListener("change", renderBookings);
+$("#bk-list").addEventListener("click", async (e) => {
+  const photo = e.target.closest("[data-bkphoto]");
+  if (photo) {
+    // Photos of people's homes are private: fetch with the admin token and open as a blob.
+    const res = await fetch(`${API}/bookings/${photo.dataset.bkphoto}/photo`, { headers: { Authorization: `Bearer ${state.token}` } });
+    if (!res.ok) return alert("Couldn't open the photo");
+    window.open(URL.createObjectURL(await res.blob()), "_blank", "noopener");
+    return;
+  }
+  const rel = e.target.closest("[data-bkrelease]");
+  const ref = e.target.closest("[data-bkrefund]");
+  if (!rel && !ref) return;
+  const btn = rel || ref;
+  const question = rel
+    ? `Send ${btn.dataset.amount} to ${btn.dataset.name}? MendMap keeps its commission. This can't be undone here.`
+    : `Refund ${btn.dataset.amount} to the resident? MendMap keeps nothing. This can't be undone.`;
+  if (!confirm(question)) return;
+  const note = prompt("Note for the resident and the mjeshtër (optional):", "") ?? null;
+  if (note === null) return;
+  btn.disabled = true;
+  try {
+    await api(`/admin/bookings/${rel ? rel.dataset.bkrelease : ref.dataset.bkrefund}/${rel ? "release" : "refund"}`,
+      { method: "POST", body: JSON.stringify({ note: note.trim() || null }) });
+  } catch (err) {
+    alert(err.message);
+  }
+  renderBookings();
 });
 
 // ---------- navigation / filters ----------

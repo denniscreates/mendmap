@@ -69,7 +69,9 @@ class Report(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     repeat_of: Mapped[int | None] = mapped_column(Integer, nullable=True)  # reported again at a spot fixed recently
     address: Mapped[str | None] = mapped_column(String(200), nullable=True)  # street the citizen picked, e.g. "Rr. Agim Ramadani"
-    photo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    photo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # the first (cover) photo
+    extra_photos: Mapped[str | None] = mapped_column(Text, nullable=True)  # more photos of the problem, comma separated urls
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # the reporter changed the post
     latitude: Mapped[float] = mapped_column(Float, index=True)
     longitude: Mapped[float] = mapped_column(Float, index=True)
     status: Mapped[str] = mapped_column(Enum(*STATUSES, name="report_status"), default="reported", index=True)
@@ -301,7 +303,8 @@ class Confirmation(Base):
 # so existing databases get the new columns here.
 class Booking(Base):
     """A paid job: a resident asks a mjeshtër for a price (with a photo), the mjeshtër quotes, the resident pays.
-    status: requested -> quoted -> paid -> done, or declined / cancelled."""
+    status: requested -> quoted -> paid (money held by MendMap) -> done (sent to the mjeshtër),
+    or declined / cancelled before paying, or disputed -> done / refunded after a problem."""
 
     __tablename__ = "bookings"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -325,6 +328,15 @@ class Booking(Base):
     quoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    pay_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)  # stripe | demo
+    charge_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    transfer_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    refund_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    worker_done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # "I finished the job"
+    released_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    problem_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     customer: Mapped[User] = relationship(foreign_keys=[customer_id], lazy="selectin")
     worker: Mapped[User] = relationship(foreign_keys=[worker_id], lazy="selectin")
 
@@ -343,6 +355,12 @@ NEW_COLUMNS = {
         "fix_ai": "VARCHAR(20)", "fix_ai_reason": "TEXT",
         "address": "VARCHAR(200)", "repeat_of": "INTEGER", "ai_description": "TEXT", "blurred": "INTEGER", "rating": "INTEGER", "reopened": "INTEGER NOT NULL DEFAULT 0",
         "ai_skilled_ok": "INTEGER", "ai_skill_needed": "VARCHAR(20)", "mjeshter_asked_at": "DATETIME",
+        "extra_photos": "TEXT", "edited_at": "DATETIME",
+    },
+    "bookings": {
+        "pay_mode": "VARCHAR(10)", "charge_id": "VARCHAR(100)", "transfer_id": "VARCHAR(100)", "refund_id": "VARCHAR(100)",
+        "worker_done_at": "DATETIME", "released_at": "DATETIME", "refunded_at": "DATETIME",
+        "problem_note": "TEXT", "admin_note": "TEXT",
     },
 }
 

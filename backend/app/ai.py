@@ -66,10 +66,11 @@ SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
+                    "image": {"type": "integer"},
                     "kind": {"type": "string", "enum": ["face", "plate"]},
                     "box": {"type": "array", "items": {"type": "integer"}},
                 },
-                "required": ["kind", "box"],
+                "required": ["image", "kind", "box"],
                 "additionalProperties": False,
             },
         },
@@ -97,6 +98,7 @@ GEMINI_SCHEMA = {
         "blur_boxes": {"type": "array", "items": {
                 "type": "object",
                 "properties": {
+                    "image": {"type": "integer"},
                     "kind": {"type": "string", "enum": ["face", "plate"]},
                     "box": {"type": "array", "items": {"type": "integer"}},
                 },
@@ -149,14 +151,24 @@ Decide:
 LANG_NAMES = {"en": "English", "sq": "Albanian", "hu": "Hungarian"}  # filled in from languages.LANGS below
 
 
-def photo_prompt(lang: str = "en") -> str:
-    """The photo check prompt, with the description written in the app user's language."""
+MAX_PHOTOS = 5  # photos per report
+
+
+def photo_prompt(lang: str = "en", count: int = 1) -> str:
+    """The photo check prompt, with the description written in the app user's language.
+    With several photos, they are judged together as one problem."""
     language = LANG_NAMES.get(lang, "English")
-    return PROMPT + f"""
+    many = "" if count <= 1 else f"""
+
+The citizen sent {count} photos of the same problem (image 1 to image {count}, in that order), for example from different angles or a close-up.
+Judge them together as one report: category, severity and description cover everything the photos show together (use the closest or clearest photo for sizes).
+photo_kind is the worst of all the photos: if any one is not a real_photo, give that kind and say which image in kind_reason.
+is_street_problem is true if the photos together show a street problem."""
+    return PROMPT + many + f"""
 - description: one or two short sentences describing the problem for the city, the way a citizen would write a report: what it is, roughly how big, and where in the picture (for example "A deep pothole about half a metre wide in the right lane, full of water."). Only what you can see; no guesses about causes. Write it in {language}. Empty string if it is not a street problem.
 - skilled_ok: true if this is NOT safe for an ordinary neighbour, but a skilled volunteer tradesperson with their own tools could safely fix it in a few hours: for example a broken bench or railing, a loose paving slab on the pavement, a broken playground swing, a blocked drain grate, peeling paint, a broken fence, a damaged ramp. False if it needs traffic control or work on the road itself, live mains electricity or streetlights, gas, work higher than 2 metres, heavy machinery, a permit, or if an ordinary neighbour could already do it (neighbour_safe true). When unsure, false.
 - skill_needed: the main skill a volunteer would need: plumbing, electrics, building (masonry, paving, concrete), painting, carpentry, gardening, welding; or none.
-- blur_boxes: every human face and every readable vehicle number plate in the photo, so MendMap can blur them before the photo is public. kind = face or plate. box = [ymin, xmin, ymax, xmax], each scaled 0 to 1000. Empty list if there are none."""
+- blur_boxes: every human face and every readable vehicle number plate in the photos, so MendMap can blur them before the photos are public. image = which photo it is in (1 for the first photo). kind = face or plate. box = [ymin, xmin, ymax, xmax] in that photo, each scaled 0 to 1000. Empty list if there are none."""
 
 
 TRANSCRIBE_PROMPT = """This is a voice note a citizen recorded while reporting a street problem in Prishtina, Kosovo.
@@ -201,7 +213,7 @@ def _shrink(data: bytes) -> bytes:
     return buf.getvalue()
 
 
-def _clean(result: dict) -> dict:
+def _clean(result: dict, count: int = 1) -> dict:
     """Keep the answer inside what the app understands."""
     if result.get("category") not in CATEGORIES:
         result["category"] = "other"
@@ -213,7 +225,7 @@ def _clean(result: dict) -> dict:
     if result.get("photo_kind") not in PHOTO_KINDS:
         result["photo_kind"] = "real_photo"
     result["description"] = str(result.get("description") or "").strip()[:600]
-    result["blur_boxes"] = _boxes(result.get("blur_boxes"))
+    result["blur_boxes"] = _boxes(result.get("blur_boxes"), count)
     if result.get("skill_needed") not in SKILLS:
         result["skill_needed"] = None
     result["skilled_ok"] = (bool(result.get("skilled_ok", False)) and result["is_street_problem"]
@@ -225,33 +237,37 @@ def _clean(result: dict) -> dict:
     return {"available": True, **result}
 
 
-def _boxes(raw) -> list[dict]:
-    """Faces and number plates to blur, as [ymin, xmin, ymax, xmax] on a 0-1000 scale; bad boxes dropped."""
+def _boxes(raw, count: int = 1) -> list[dict]:
+    """Faces and number plates to blur, as [ymin, xmin, ymax, xmax] on a 0-1000 scale, with the photo they're in
+    (image, 1-based); bad boxes dropped."""
     out = []
     for b in raw if isinstance(raw, list) else []:
         try:
             kind = b.get("kind")
             y0, x0, y1, x1 = (min(1000, max(0, int(v))) for v in b.get("box"))
+            image = int(b.get("image") or 1)
         except (AttributeError, TypeError, ValueError):
             continue
-        if kind in ("face", "plate") and y1 > y0 and x1 > x0:
-            out.append({"kind": kind, "box": [y0, x0, y1, x1]})
-    return out[:40]
+        if kind in ("face", "plate") and y1 > y0 and x1 > x0 and 1 <= image <= count:
+            out.append({"image": image, "kind": kind, "box": [y0, x0, y1, x1]})
+    return out[:60]
 
 
 _cache: dict[str, tuple[float, dict]] = {}
 
 
-async def check_photo(data: bytes, lang: str = "en") -> dict:
+async def check_photo(data: bytes | list[bytes], lang: str = "en") -> dict:
+    """One photo or several photos of the same problem, judged together in one AI call."""
     which = provider()
     if which is None:
         return {"available": False}
+    images = (data if isinstance(data, list) else [data])[:MAX_PHOTOS]
     lang = lang if lang in LANG_NAMES else "en"
-    key = hashlib.sha256(data).hexdigest() + ":" + lang
+    key = ",".join(hashlib.sha256(d).hexdigest() for d in images) + ":" + lang
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < CACHE_S:
         return dict(hit[1])
-    result = await _check(which, data, photo_prompt(lang))
+    result = await _check(which, images, photo_prompt(lang, len(images)))
     if result.get("available"):
         if len(_cache) > 500:
             _cache.clear()
@@ -259,14 +275,14 @@ async def check_photo(data: bytes, lang: str = "en") -> dict:
     return result
 
 
-async def _check(which: str, data: bytes, prompt: str) -> dict:
+async def _check(which: str, images: list[bytes], prompt: str) -> dict:
     try:
-        jpeg = _shrink(data)
+        jpegs = [_shrink(d) for d in images]
     except Exception:
         return {"available": True, "is_street_problem": False, "reason": "This file isn't a photo."}
     if which == "gemini":
-        return await _check_gemini(jpeg, prompt)
-    return await _check_claude(jpeg, prompt)
+        return await _check_gemini(jpegs, prompt)
+    return await _check_claude(jpegs, prompt)
 
 
 # ---------- Gemini ----------
@@ -349,11 +365,11 @@ async def _gemini_generate(contents, config, what: str):
             task.cancel()
 
 
-async def _check_gemini(jpeg: bytes, prompt: str) -> dict:
+async def _check_gemini(jpegs: list[bytes], prompt: str) -> dict:
     from google.genai import types
 
     response = await _gemini_generate(
-        [types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), prompt],
+        [*(types.Part.from_bytes(data=j, mime_type="image/jpeg") for j in jpegs), prompt],
         types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=GEMINI_SCHEMA, temperature=0),
         "photo check",
     )
@@ -364,7 +380,7 @@ async def _check_gemini(jpeg: bytes, prompt: str) -> dict:
     except (json.JSONDecodeError, ValueError) as exc:
         log.warning("Gemini photo check returned invalid JSON: %s", exc)
         return {"available": False}
-    return _clean(result)
+    return _clean(result, len(jpegs))
 
 
 async def transcribe(audio: bytes, extension: str) -> str | None:
@@ -387,7 +403,7 @@ async def transcribe(audio: bytes, extension: str) -> str | None:
 
 # ---------- Claude ----------
 
-async def _check_claude(jpeg: bytes, prompt: str) -> dict:
+async def _check_claude(jpegs: list[bytes], prompt: str) -> dict:
     global _claude
     import anthropic
 
@@ -402,8 +418,8 @@ async def _check_claude(jpeg: bytes, prompt: str) -> dict:
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
-                                                 "data": base64.standard_b64encode(jpeg).decode()}},
+                    *({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                   "data": base64.standard_b64encode(j).decode()}} for j in jpegs),
                     {"type": "text", "text": prompt},
                 ],
             }],
@@ -429,7 +445,7 @@ async def _check_claude(jpeg: bytes, prompt: str) -> dict:
     except json.JSONDecodeError:
         log.warning("AI photo check returned invalid JSON")
         return {"available": False}
-    return _clean(result)
+    return _clean(result, len(jpegs))
 
 
 # ---------- neighbour fix: before vs after ----------

@@ -136,8 +136,15 @@ def can_do(skills: list[str], need: str | None) -> bool:
     return bool(need) and bool(skills) and (need == "any" or need in skills)
 
 
+def photo_urls(r: Report) -> list[str]:
+    """All photos of a report, the cover photo first."""
+    extra = [u for u in (r.extra_photos or "").split(",") if u]
+    return ([r.photo_url] if r.photo_url else []) + extra
+
+
 def enrich(out, r: Report):
     """Fills the computed fields of a ReportOut/ReportDetail."""
+    out.photos = photo_urls(r)
     out.priority, out.priority_reasons = priority(r)
     out.neighbourhood = neighbourhood(r.latitude, r.longitude)
     out.neighbour_fixable = neighbour_ok(r)

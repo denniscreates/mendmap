@@ -1,7 +1,7 @@
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import { router, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { SKILL_ICON } from "../../lib/mjeshtrit";
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { useCallback, useState } from "react";
+import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 import MapView, { Marker } from "../../components/Map";
 import Animated, { FadeInDown, ZoomIn } from "react-native-reanimated";
 import Ionicons from "@expo/vector-icons/Ionicons";
@@ -30,6 +30,9 @@ export default function ReportScreen() {
   const [fixPhoto, setFixPhoto] = useState<string | null>(null);
   const [fixNote, setFixNote] = useState("");
   const [fixBusy, setFixBusy] = useState(false);
+  const [page, setPage] = useState(0); // which photo is showing
+  const [usingAi, setUsingAi] = useState(false);
+  const { width } = useWindowDimensions();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,7 +45,7 @@ export default function ReportScreen() {
       setLoading(false);
     }
   }, [id, tErr]);
-  useEffect(() => void load(), [load]);
+  useFocusEffect(useCallback(() => void load(), [load])); // also after coming back from editing
 
   const [rating, setRating] = useState(false);
   const rate = (ok: boolean) => {
@@ -131,6 +134,7 @@ export default function ReportScreen() {
     );
 
   const mine = report.user_id === user?.id;
+  const canEdit = mine && report.status === "reported" && !report.claimed_by; // nobody works on it yet
   const coords = { latitude: report.latitude, longitude: report.longitude };
   const catName = t(categoryKey(report.category.icon));
   // Neighbour fix: residents of the area may take safe jobs (dumping, accessibility, other).
@@ -161,7 +165,19 @@ export default function ReportScreen() {
         </Animated.View>
       )}
 
-      {report.photo_url ? (
+      {report.photos.length > 1 ? (
+        <View>
+          <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={{ marginTop: 16 }}
+            onMomentumScrollEnd={(e) => setPage(Math.round(e.nativeEvent.contentOffset.x / width))}>
+            {report.photos.map((u) => (
+              <Image key={u} source={{ uri: photoUrl(u)! }} style={[s.photo, { width, marginTop: 0 }]} />
+            ))}
+          </ScrollView>
+          <View style={s.dots}>
+            {report.photos.map((u, i) => <View key={u} style={[s.dot, i === page && s.dotOn]} />)}
+          </View>
+        </View>
+      ) : report.photo_url ? (
         <Image source={{ uri: photoUrl(report.photo_url)! }} style={s.photo} />
       ) : (
         <View style={[s.photo, s.center]}>
@@ -179,6 +195,31 @@ export default function ReportScreen() {
         <T style={s.desc}>{report.description || t("noDescription")}</T>
         {!!report.ai_description && report.description === report.ai_description && (
           <T style={[s.muted, { fontSize: 12 }]}>✨ {t("aiWroteDesc")}</T>
+        )}
+        {!!report.edited_at && <T style={[s.muted, { fontSize: 12 }]}>✎ {t("editedOn", { d: formatDate(report.edited_at) })}</T>}
+        {/* The AI's own description of the photos, when the reporter wrote something else: one tap to use it. */}
+        {canEdit && !!report.ai_description && report.description !== report.ai_description && (
+          <View style={s.aiSuggest}>
+            <T style={[s.muted, { fontSize: 12 }]}>✨ {t("aiSuggests")}</T>
+            <T style={{ fontStyle: "italic" }}>{report.ai_description}</T>
+            <Pressable disabled={usingAi} onPress={async () => {
+              setUsingAi(true);
+              try {
+                await api.editReport(report.id, { description: report.ai_description!, keep: report.photos, add: [] });
+                await load();
+              } catch (e) {
+                Alert.alert("MendMap", tErr((e as Error).message));
+              } finally {
+                setUsingAi(false);
+              }
+            }}>
+              <T medium style={{ color: colors.accent }}>{usingAi ? "…" : t("aiUseIt")}</T>
+            </Pressable>
+          </View>
+        )}
+        {canEdit && (
+          <Button title={t("editPost")} variant="ghost" onPress={() => router.push(`/report-edit/${report.id}`)}
+            icon={<Ionicons name="create-outline" size={18} color={colors.text} />} />
         )}
 
         {mine && report.status === "fixed" && report.rating == null && (
@@ -426,6 +467,10 @@ const makeStyles = (c: Palette) =>
     bannerTitle: { color: "#fff", fontSize: 18 },
     bannerText: { color: "#fff", opacity: 0.9, marginTop: 4 },
     photo: { width: "100%", aspectRatio: 4 / 3, backgroundColor: c.surface, marginTop: 16 },
+    dots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 8 },
+    dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: c.line },
+    dotOn: { backgroundColor: c.accent, width: 18 },
+    aiSuggest: { gap: 4, padding: 12, borderRadius: 14, backgroundColor: c.accent + "14", borderWidth: 1, borderColor: c.accent + "44" },
     body: { padding: 16, gap: 12 },
     title: { fontSize: 22, flexShrink: 1 },
     desc: { fontSize: 15, lineHeight: 21 },

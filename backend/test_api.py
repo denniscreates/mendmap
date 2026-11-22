@@ -241,17 +241,19 @@ def test_gemini_stubbed():
 
     calls = []
     prompts = []
+    images = []  # how many photos each photo check saw
 
     class FakeModels:
         async def generate_content(self, model, contents, config=None):
             mime = contents[0].inline_data.mime_type
             calls.append((model, mime))
+            images.append(sum(1 for x in contents if not isinstance(x, str)))
             prompts.append(contents[-1] if isinstance(contents[-1], str) else "")
             if mime.startswith("image/"):
                 text = ('{"is_street_problem": true, "category": "dumping", "severity": 9, "reason": "Rubbish on the pavement.",'
                         ' "neighbour_safe": ' + ("true" if SAFE[0] else "false") + ', "safety_reason": "Bags and gloves are enough.",'
                         ' "description": "A pile of rubbish bags on the pavement.",'
-                        ' "blur_boxes": [{"kind": "face", "box": [100, 100, 600, 500]}, {"kind": "plate", "box": [5, 5, 1, 1]}]}')
+                        ' "blur_boxes": [{"kind": "face", "box": [100, 100, 600, 500]}, {"kind": "plate", "box": [5, 5, 1, 1]}' + (', {"image": 2, "kind": "plate", "box": [200, 200, 400, 600]}, {"image": 7, "kind": "face", "box": [1, 1, 900, 900]}' if images[-1] > 1 else "") + ']}')
             else:
                 text = "  Ka mbeturina para shkollës.  "
             return pytypes.SimpleNamespace(text=text)
@@ -299,6 +301,20 @@ def test_gemini_stubbed():
             c.post("/ai/check-photo", headers=h, files={"photo": ("p.jpg", jpg2, "image/jpeg")})
             assert len(calls) == n
             assert ("gemini-3.8-flash", "audio/mp4") in calls
+            # Several photos: the AI looks at all of them in one call and each photo gets its own blurring.
+            buf2 = io.BytesIO()
+            Image.new("RGB", (40, 30), "white").save(buf2, "JPEG")
+            jpg3 = buf2.getvalue()
+            chk = c.post("/ai/check-photo", headers=h, files=[("photo", ("a.jpg", jpg + b"\1", "image/jpeg")),
+                                                              ("photo", ("b.jpg", jpg3, "image/jpeg"))]).json()
+            assert images[-1] == 2 and "sent 2 photos" in prompts[-1]
+            assert [b.get("image") for b in chk["blur_boxes"]] == [1, 2]  # the box on a 7th photo is dropped
+            r3 = c.post("/reports", headers=h, data={"category_id": 3, **PRISHTINA},
+                        files=[("photo", ("a.jpg", jpg + b"\2", "image/jpeg")), ("photos", ("b.jpg", jpg3, "image/jpeg"))]).json()
+            got3 = c.get(f"/reports/{r3['id']}").json()
+            assert len(got3["photos"]) == 2 and got3["photos"][0] == got3["photo_url"] and got3["blurred"] == 2
+            second = (Path(__file__).parent / "uploads" / Path(got3["photos"][1]).name).read_bytes()
+            assert second != jpg3  # the plate in photo 2 was blurred
     finally:
         ai._gemini = None
         for k, v in old.items():
@@ -306,6 +322,42 @@ def test_gemini_stubbed():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+def test_edit_report():
+    """Several photos per report, and the reporter can edit the post until someone starts working on it."""
+    with TestClient(app) as c:
+        tok = reg(c, {"name": "Edi", "email": "edi@x.io", "password": "secret1"}).json()["token"]
+        h = {"Authorization": f"Bearer {tok}"}
+        other = {"Authorization": f"Bearer {reg(c, {'name': 'Oli', 'email': 'oli@x.io', 'password': 'secret1'}).json()['token']}"}
+        png2 = PNG + b"\0"
+        r = c.post("/reports", headers=h, data={"category_id": 1, "description": "Hole", **PRISHTINA},
+                   files=[("photo", ("a.png", PNG, "image/png")), ("photos", ("b.png", png2, "image/png")),
+                          ("photos", ("c.png", png2 + b"1", "image/png"))]).json()
+        assert len(r["photos"]) == 3 and r["edited_at"] is None
+        too_many = [("photo", ("a.png", PNG, "image/png"))] + [("photos", (f"{i}.png", PNG, "image/png")) for i in range(5)]
+        assert c.post("/reports", headers=h, data={"category_id": 1, **PRISHTINA}, files=too_many).status_code == 400
+
+        url = f"/reports/{r['id']}"
+        assert c.put(url, headers=other, data={"description": "Mine now"}).status_code == 403
+        # Change the text and severity, drop the cover photo and add a new one: the second photo becomes the cover.
+        e = c.put(url, headers=h, data={"description": "  Deep hole, 1 m wide  ", "severity": 4, "category_id": 2,
+                                         "keep": ",".join(r["photos"][1:])},
+                  files=[("photos", ("d.png", png2 + b"2", "image/png"))])
+        assert e.status_code == 200, e.text
+        e = e.json()
+        assert e["description"] == "Deep hole, 1 m wide" and e["severity"] == 4 and e["category"]["id"] == 2
+        assert e["photos"][:2] == r["photos"][1:] and len(e["photos"]) == 3 and e["photo_url"] == r["photos"][1]
+        assert e["edited_at"]
+        assert c.get(r["photos"][0]).status_code == 404  # the removed photo is gone from the server
+        assert c.put(url, headers=h, data={"keep": "/uploads/someone-elses.jpg"}).status_code == 400  # no photo left
+        assert c.put(url, headers=h, data={"severity": 0}).json()["severity"] is None  # cleared, no AI answer here
+
+        # Once the city works on it, it can't be edited.
+        adm = c.post("/auth/login", json={"email": "admin@mendmap.local", "password": "admin123"}).json()
+        c.patch(f"/admin/reports/{r['id']}/status", headers={"Authorization": f"Bearer {adm['token']}"},
+                json={"status": "in_progress", "comment": "On it"})
+        assert c.put(url, headers=h, data={"description": "Too late"}).status_code == 409
 
 
 def test_rating():
@@ -795,7 +847,7 @@ def test_community():
 
 
 def test_bookings():
-    """Paid jobs: photo -> quote -> pay (demo, then Stripe stubbed) with a 10% commission -> done."""
+    """Paid jobs: photo -> quote -> pay (held) -> finished -> resident confirms -> 90% sent, or problem -> admin refund."""
     import asyncio, hashlib, hmac, json, time
     from app import bookings as bk
     from app.db import SessionLocal
@@ -842,7 +894,59 @@ def test_bookings():
         paid = c.post(f"/bookings/{b['id']}/confirm-payment", headers=hc).json()
         assert paid["status"] == "paid" and paid["commission_cents"] == 400
         assert c.post(f"/bookings/{b['id']}/cancel", headers=hc).status_code == 409
-        assert c.post(f"/bookings/{b['id']}/done", headers=hw).json()["status"] == "done"
+        # The money is held: only the resident can release it, after the mjeshtër finished.
+        assert c.post(f"/bookings/{b['id']}/done", headers=hw).status_code == 403
+        assert c.post(f"/bookings/{b['id']}/finished", headers=hc).status_code == 403
+        fin = c.post(f"/bookings/{b['id']}/finished", headers=hw).json()
+        assert fin["worker_done_at"] and fin["auto_release_at"] and fin["status"] == "paid"
+        done = c.post(f"/bookings/{b['id']}/done", headers=hc).json()
+        assert done["status"] == "done" and done["released_at"] and done["auto_release_at"] is None
+        assert c.post(f"/bookings/{b['id']}/problem", headers=hc, json={"note": "Too late now"}).status_code == 409
+
+        # A problem: the money stays held and an admin refunds it. MendMap keeps nothing.
+        adm = c.post("/auth/login", json={"email": "admin@mendmap.local", "password": "admin123"}).json()
+        ha = {"Authorization": f"Bearer {adm['token']}"}
+
+        def paid_booking(text):
+            x = c.post("/bookings", headers=hc, data={"mjeshter_id": mid, "description": text},
+                       files={"photo": ("p.png", PNG, "image/png")}).json()
+            c.post(f"/bookings/{x['id']}/quote", headers=hw, json={"fee": 30})
+            assert c.post(f"/bookings/{x['id']}/confirm-payment", headers=hc).json()["status"] == "paid"
+            return x["id"]
+
+        d1 = paid_booking("Broken window latch")
+        assert c.post(f"/bookings/{d1}/problem", headers=hw, json={"note": "nope nope"}).status_code == 403
+        assert c.post(f"/bookings/{d1}/problem", headers=hc, json={"note": "no"}).status_code == 422
+        dis = c.post(f"/bookings/{d1}/problem", headers=hc, json={"note": "The latch still doesn't close"}).json()
+        assert dis["status"] == "disputed" and dis["problem_note"].startswith("The latch")
+        assert c.post(f"/bookings/{d1}/done", headers=hc).status_code == 409
+        assert c.get("/admin/bookings", headers=hc).status_code == 403
+        rows = c.get("/admin/bookings", headers=ha).json()
+        assert rows[0]["id"] == d1 and rows[0]["customer_email"] == "vera@b.io" and rows[0]["pay_mode"] == "demo"
+        summ = c.get("/admin/bookings/summary", headers=ha).json()
+        assert summ["disputed"] == 1 and summ["held_cents"] == 3000 and summ["earned_cents"] == 400 and summ["paid_out_cents"] == 3600
+        rf = c.post(f"/admin/bookings/{d1}/refund", headers=ha, json={"note": "Refunded, sorry"}).json()
+        assert rf["status"] == "refunded" and rf["commission_cents"] == 0 and rf["admin_note"] == "Refunded, sorry"
+        assert c.post(f"/admin/bookings/{d1}/release", headers=ha, json={}).status_code == 409
+        summ = c.get("/admin/bookings/summary", headers=ha).json()
+        assert summ["refunded_cents"] == 3000 and summ["held"] == 0 and summ["earned_cents"] == 400
+
+        # An admin can also decide for the mjeshtër.
+        d2 = paid_booking("Squeaky door")
+        c.post(f"/bookings/{d2}/problem", headers=hc, json={"note": "It squeaks a little"})
+        assert c.post(f"/admin/bookings/{d2}/release", headers=ha, json={}).json()["status"] == "done"
+
+        # No answer from the resident: the money is sent after AUTO_RELEASE_DAYS.
+        d3 = paid_booking("Loose tile")
+        c.post(f"/bookings/{d3}/finished", headers=hw)
+        assert asyncio.run(bk.release_due()) == 0  # not yet
+        from datetime import timedelta
+        from app.models import Booking, now
+        with SessionLocal() as db:
+            db.get(Booking, d3).worker_done_at = now() - timedelta(days=4)
+            db.commit()
+        assert asyncio.run(bk.release_due()) == 1
+        assert c.get(f"/bookings/{d3}", headers=hc).json()["status"] == "done"
         os.environ["MENDMAP_DEMO_PAYMENTS"] = "off"
 
         # Stripe (stubbed): the quote needs payouts, the payment sends 90% to the mjeshtër.
@@ -860,7 +964,12 @@ def test_bookings():
             if method == "POST" and path == "/payment_intents":
                 return {"id": "pi_test", "client_secret": "pi_test_secret", "amount": data["amount"], "status": "requires_payment_method"}
             if path == "/payment_intents/pi_test":
-                return {"id": "pi_test", "amount": 2550, "status": "succeeded", "metadata": {"booking_id": str(b2["id"])}}
+                return {"id": "pi_test", "amount": 2550, "status": "succeeded", "latest_charge": "ch_test",
+                        "metadata": {"booking_id": str(b2["id"])}}
+            if path == "/transfers":
+                return {"id": "tr_test"}
+            if path == "/refunds":
+                return {"id": "re_test"}
             raise AssertionError(path)
 
         real = bk.stripe_call
@@ -879,9 +988,27 @@ def test_bookings():
             pay = c.post(f"/bookings/{b2['id']}/pay", headers=hc).json()
             assert pay["mode"] == "stripe" and pay["client_secret"] == "pi_test_secret" and pay["publishable_key"] == "pk_test_x"
             pi = next(d for m_, p_, d in calls if p_ == "/payment_intents")
-            assert pi["amount"] == 2550 and pi["application_fee_amount"] == 255 and pi["transfer_data"] == {"destination": "acct_test"}
-            done = c.post(f"/bookings/{b2['id']}/confirm-payment", headers=hc).json()
-            assert done["status"] == "paid" and done["commission_cents"] == 255 and done["worker_gets_cents"] == 2295
+            # The payment stays with MendMap: no destination, no fee taken at payment time.
+            assert pi["amount"] == 2550 and "transfer_data" not in pi and "application_fee_amount" not in pi
+            assert pi["transfer_group"] == f"booking-{b2['id']}"
+            held = c.post(f"/bookings/{b2['id']}/confirm-payment", headers=hc).json()
+            assert held["status"] == "paid" and held["commission_cents"] == 255 and held["worker_gets_cents"] == 2295
+            assert not any(p_ == "/transfers" for _, p_, _ in calls)
+            # Resident confirms: 90% goes to the mjeshtër, linked to the charge.
+            assert c.post(f"/bookings/{b2['id']}/done", headers=hc).json()["status"] == "done"
+            tr = next(d for m_, p_, d in calls if p_ == "/transfers")
+            assert tr["amount"] == 2295 and tr["destination"] == "acct_test" and tr["source_transaction"] == "ch_test"
+            # A Stripe refund goes back to the card.
+            b3 = c.post("/bookings", headers=hc, data={"mjeshter_id": mid, "description": "Fix the gate"},
+                        files={"photo": ("p.png", PNG, "image/png")}).json()
+            c.post(f"/bookings/{b3['id']}/quote", headers=hw, json={"fee": 25.5})
+            with SessionLocal() as db:
+                from app.models import Booking
+                bb = db.get(Booking, b3["id"])
+                bb.status, bb.pay_mode, bb.payment_intent = "disputed", "stripe", "pi_test"
+                db.commit()
+            assert c.post(f"/admin/bookings/{b3['id']}/refund", headers=ha, json={}).json()["refund_id"] == "re_test"
+            assert next(d for m_, p_, d in calls if p_ == "/refunds")["payment_intent"] == "pi_test"
         finally:
             bk.stripe_call = real
             os.environ.pop("STRIPE_SECRET_KEY"); os.environ.pop("STRIPE_PUBLISHABLE_KEY")
@@ -896,4 +1023,4 @@ def test_bookings():
 
 
 if __name__ == "__main__":
-    test_lifecycle(); test_gemini_stubbed(); test_rating(); test_mjeshtrit(); test_translate(); test_chat(); test_street_search(); test_community(); test_fraud(); test_gemini_hedge(); test_bookings(); print("OK")
+    test_lifecycle(); test_gemini_stubbed(); test_rating(); test_mjeshtrit(); test_translate(); test_chat(); test_street_search(); test_community(); test_fraud(); test_gemini_hedge(); test_bookings(); test_edit_report(); print("OK")

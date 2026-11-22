@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500&display=swap" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="styles.css?v=11" />
+  <link rel="stylesheet" href="styles.css?v=12" />
 </head>
 <body>
   <!-- Login -->
@@ -42,6 +42,7 @@
         <button data-view="fixers">Fixes &amp; rewards <span id="fix-badge" class="count-badge hidden"></span></button>
         <button data-view="mjeshtrit">Mjeshtri <span id="mj-badge" class="count-badge hidden"></span></button>
         <button data-view="chat">Chat <span id="chat-badge" class="count-badge hidden"></span></button>
+        <button data-view="bookings">Bookings <span id="bk-badge" class="count-badge hidden"></span></button>
       </nav>
       <div class="me"><a class="btn ghost" href="/city/" target="_blank" rel="noopener" title="Public transparency page">Public page ↗</a><span id="me-name"></span><button type="button" class="btn ghost theme-btn" data-theme-toggle title="Light / dark">◐</button><button id="logout" class="btn ghost">Sign out</button></div>
     </header>
@@ -162,6 +163,26 @@
         <div id="chat-list" class="chat-list"></div>
         <p id="chat-empty" class="muted center hidden">No reported messages. 🎉</p>
       </div>
+
+      <div id="view-bookings" class="view hidden">
+        <p class="muted">Paid jobs between residents and mjeshtrit. MendMap holds each payment until the resident confirms the job is done
+          (or for <span id="bk-days">3</span> days after the mjeshtër finishes, then it's sent automatically). If the resident reports a problem,
+          the money stays held until you decide here: <b>Pay the mjeshtër</b> (MendMap keeps its commission) or <b>Refund</b> (the resident
+          gets everything back and MendMap keeps nothing).</p>
+        <p id="bk-mode" class="muted"></p>
+        <div class="cards" id="bk-cards"></div>
+        <div class="summary-head">
+          <h3>Bookings</h3>
+          <select id="bk-filter">
+            <option value="disputed,paid">Problems and held money</option>
+            <option value="disputed">Problems only</option>
+            <option value="done,refunded">Paid out and refunded</option>
+            <option value="">All bookings</option>
+          </select>
+        </div>
+        <div id="bk-list" class="chat-list"></div>
+        <p id="bk-empty" class="muted center hidden">Nothing here. 🎉</p>
+      </div>
     </main>
 
     <!-- Detail drawer -->
@@ -172,6 +193,6 @@
   </section>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>

@@ -110,6 +110,8 @@ class ReportOut(BaseModel):
     address: str | None = None
     repeat_of: int | None = None
     photo_url: str | None
+    photos: list[str] = []  # every photo, the cover first
+    edited_at: datetime | None = None
     latitude: float
     longitude: float
     status: Status
@@ -561,7 +563,7 @@ class SummaryOut(BaseModel):
 # ---------- paid bookings ----------
 class BookingOut(BaseModel):
     id: int
-    status: str  # requested, quoted, declined, cancelled, paid, done
+    status: str  # requested, quoted, declined, cancelled, paid (held), disputed, done (paid out), refunded
     description: str
     address: str | None = None
     report_id: int | None = None
@@ -582,6 +584,41 @@ class BookingOut(BaseModel):
     quoted_at: datetime | None = None
     paid_at: datetime | None = None
     done_at: datetime | None = None
+    worker_done_at: datetime | None = None  # the mjeshtër said "I finished the job"
+    auto_release_at: datetime | None = None  # when the money is sent if the resident doesn't answer
+    problem_note: str | None = None
+    admin_note: str | None = None
+    released_at: datetime | None = None
+    refunded_at: datetime | None = None
+
+
+class BookingAdmin(BookingOut):
+    customer_email: str | None = None
+    worker_email: str | None = None
+    pay_mode: str | None = None
+    payment_intent: str | None = None
+    transfer_id: str | None = None
+    refund_id: str | None = None
+
+
+class BookingSummary(BaseModel):
+    currency: str
+    commission_rate: float
+    auto_release_days: float
+    stripe: bool
+    demo: bool
+    held: int = 0
+    held_cents: int = 0
+    disputed: int = 0
+    done: int = 0
+    paid_out_cents: int = 0
+    earned_cents: int = 0  # MendMap's commission on finished jobs
+    refunded: int = 0
+    refunded_cents: int = 0
+
+
+class ProblemIn(BaseModel):
+    note: str = Field(..., min_length=5, max_length=1000)
 
 
 class QuoteIn(BaseModel):

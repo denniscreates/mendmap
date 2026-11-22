@@ -61,6 +61,8 @@ export type Report = {
   address?: string | null;
   repeat_of?: number | null;
   photo_url: string | null;
+  photos: string[]; // every photo, the cover first
+  edited_at: string | null;
   latitude: number;
   longitude: number;
   status: Status;
@@ -292,7 +294,7 @@ export type TopReport = {
 export type Place = { name: string; detail: string | null; kind: "street" | "place"; latitude: number; longitude: number };
 
 // ---------- paid bookings ----------
-export type BookingStatus = "requested" | "quoted" | "declined" | "cancelled" | "paid" | "done";
+export type BookingStatus = "requested" | "quoted" | "declined" | "cancelled" | "paid" | "disputed" | "done" | "refunded";
 export type Booking = {
   id: number;
   status: BookingStatus;
@@ -316,6 +318,12 @@ export type Booking = {
   quoted_at: string | null;
   paid_at: string | null;
   done_at: string | null;
+  worker_done_at: string | null; // the mjeshtër said "I finished the job"
+  auto_release_at: string | null; // the money is sent then if nobody reports a problem
+  problem_note: string | null;
+  admin_note: string | null;
+  released_at: string | null;
+  refunded_at: string | null;
 };
 export type NewBooking = { mjeshterId: number; description: string; photoUri: string; address?: string; reportId?: number; skill?: string };
 export type PayInfo = {
@@ -446,6 +454,9 @@ export const api = {
   payBooking: (id: number) => request<PayInfo>(`/bookings/${id}/pay`, { method: "POST" }),
   confirmBookingPayment: (id: number) => request<Booking>(`/bookings/${id}/confirm-payment`, { method: "POST" }),
   bookingDone: (id: number) => request<Booking>(`/bookings/${id}/done`, { method: "POST" }),
+  bookingFinished: (id: number) => request<Booking>(`/bookings/${id}/finished`, { method: "POST" }),
+  bookingProblem: (id: number, note: string) =>
+    request<Booking>(`/bookings/${id}/problem`, { method: "POST", body: JSON.stringify({ note }) }),
   payouts: () => request<Payouts>("/payouts/me"),
   payoutsOnboard: () => request<{ url: string }>("/payouts/onboard", { method: "POST" }),
   chatRooms: () => request<ChatRoom[]>("/chat/rooms"),
@@ -491,15 +502,27 @@ export const api = {
     if (r.address) form.append("address", r.address);
     if (r.severity) form.append("severity", String(r.severity));
     if (r.photoUri) form.append("photo", filePart(r.photoUri, "photo.jpg", imageType(r.photoUri)));
+    (r.morePhotos ?? []).forEach((u, i) => form.append("photos", filePart(u, `photo-${i + 2}.jpg`, imageType(u))));
     if (r.voiceUri) form.append("voice", filePart(r.voiceUri, "voice.m4a", "audio/m4a"));
     return request<Report>("/reports", { method: "POST", body: form });
   },
   /** AI photo check: suggested category and severity. { available: false } when the server has no AI key. */
-  checkPhoto: (uri: string, lang = "en") => {
+  checkPhoto: (uris: string | string[], lang = "en") => {
     const form = new FormData();
-    form.append("photo", filePart(uri, "photo.jpg", imageType(uri)));
+    (Array.isArray(uris) ? uris : [uris]).forEach((u, i) => form.append("photo", filePart(u, `photo-${i + 1}.jpg`, imageType(u))));
     form.append("lang", lang);
     return request<PhotoCheck>("/ai/check-photo", { method: "POST", body: form });
+  },
+  /** The reporter changes their post (only while nobody is working on it). */
+  editReport: (id: number, e: ReportEdit) => {
+    const form = new FormData();
+    if (e.categoryId != null) form.append("category_id", String(e.categoryId));
+    if (e.description != null) form.append("description", e.description);
+    if (e.address != null) form.append("address", e.address);
+    if (e.severity !== undefined) form.append("severity", String(e.severity ?? 0));
+    form.append("keep", e.keep.join(","));
+    e.add.forEach((u, i) => form.append("photos", filePart(u, `photo-${i + 1}.jpg`, imageType(u))));
+    return request<ReportDetail>(`/reports/${id}`, { method: "PUT", body: form });
   },
   setHome: (coords: { latitude: number; longitude: number } | null) =>
     request<User>("/me/home", {
@@ -527,6 +550,16 @@ export type NewReport = {
   description?: string;
   address?: string;
   photoUri?: string | null;
+  morePhotos?: string[]; // up to 4 more photos of the same problem
   voiceUri?: string | null;
   severity?: number | null;
+};
+export const MAX_PHOTOS = 5;
+export type ReportEdit = {
+  categoryId?: number;
+  description?: string;
+  address?: string;
+  severity?: number | null; // null: let the AI decide
+  keep: string[]; // photo urls to keep, in order
+  add: string[]; // new local photos
 };

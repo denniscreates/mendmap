@@ -29,7 +29,7 @@ from .db import Base, SessionLocal, engine, get_db
 from .insights import (
     ALERT_RADIUS_M, CLAIM_HOURS, MAX_ACTIVE_CLAIMS, NEIGHBOUR_FIXABLE, NEIGHBOURHOODS, 
     badges, can_do, distance_m, enrich, flag_list, is_flagged, level, neighbour_ok, neighbourhood, priority, route_order,
-    skill_job,
+    photo_urls, skill_job,
 )
 from .models import (
     Category, Confirmation, Mjeshter, OtpCode, PartnerReward, Report, RewardClaim, StatusUpdate, User, migrate, now,
@@ -43,6 +43,7 @@ PROOFS = ROOT / "private" / "proofs"  # mjeshtër documents: never served public
 ADMIN_DIR = ROOT.parent / "admin"
 PUBLIC_DIR = ROOT.parent / "public"
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
+MAX_PHOTOS = 5  # photos per report
 MAX_VOICE_BYTES = 5 * 1024 * 1024
 PHOTO_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/heic": ".heic"}
 VOICE_TYPES = {
@@ -58,8 +59,10 @@ async def lifespan(_: FastAPI):
     migrate(engine)
     seed()
     reminders = asyncio.create_task(community.reminder_loop())
+    payouts = asyncio.create_task(bookings.release_loop())  # pays mjeshtrit when the resident doesn't answer
     yield
     reminders.cancel()
+    payouts.cancel()
 
 
 app = FastAPI(title="MendMap API", version="2.0.0", lifespan=lifespan)
@@ -175,11 +178,11 @@ async def ai_review(report_id: int) -> bool:
         r = db.get(Report, report_id)
         if not r or not r.photo_url:
             return True
-        path = UPLOADS / Path(r.photo_url).name
-    if not path.exists():
+        paths = [p for p in (UPLOADS / Path(u).name for u in photo_urls(r)) if p.exists()]
+    if not paths:
         return True
-    original = path.read_bytes()
-    res = await ai.check_photo(original)
+    originals = [p.read_bytes() for p in paths]
+    res = await ai.check_photo(originals)  # all photos together: one description and severity for the problem
     if not res.get("available"):
         return ai.provider() is None  # no AI configured: nothing to retry
     with SessionLocal() as db:
@@ -207,17 +210,20 @@ async def ai_review(report_id: int) -> bool:
         r.ai_skill_needed = res.get("skill_needed")
         if not (r.description or "").strip() and r.ai_description and r.ai_is_problem:
             r.description = r.ai_description  # no text from the citizen: the AI describes the photo
-        # Privacy: blur faces and number plates in the public photo (once; the fingerprint stays the original's).
+        # Privacy: blur faces and number plates in the public photos (once; the fingerprint stays the original's).
         if r.blurred is None:
             boxes = res.get("blur_boxes") or []
-            blurred = photos.blur(original, boxes)
-            if blurred:
-                try:
-                    path.write_bytes(blurred)
-                except OSError as exc:
-                    logging.getLogger("mendmap").warning("Couldn't blur report %s: %s", report_id, exc)
-                    blurred = None
-            r.blurred = len(boxes) if blurred else 0
+            done = 0
+            for i, (path, original) in enumerate(zip(paths, originals), start=1):
+                mine = [b for b in boxes if b.get("image", 1) == i]
+                blurred = photos.blur(original, mine)
+                if blurred:
+                    try:
+                        path.write_bytes(blurred)
+                        done += len(mine)
+                    except OSError as exc:
+                        logging.getLogger("mendmap").warning("Couldn't blur report %s: %s", report_id, exc)
+            r.blurred = done
         db.commit()
     return True
 
@@ -465,13 +471,18 @@ def ai_status():
 
 
 @app.post("/ai/check-photo", response_model=schemas.PhotoCheck, tags=["reports"])
-async def check_photo(photo: UploadFile = File(...), lang: str = Form("en"), _: User = Depends(current_user)):
-    """AI photo check: suggested category and severity, a description of the photo in the user's
-    language, whether it shows a street problem, and the faces/plates that will be blurred."""
-    data = await photo.read()
-    if len(data) > MAX_PHOTO_BYTES:
-        raise HTTPException(413, "Photo is larger than 10 MB")
-    return await ai.check_photo(data, lang)
+async def check_photo(photo: list[UploadFile] = File(...), lang: str = Form("en"), _: User = Depends(current_user)):
+    """AI photo check of one or more photos of the same problem: suggested category and severity, a description
+    in the user's language, whether it shows a street problem, and the faces/plates that will be blurred."""
+    if len(photo) > MAX_PHOTOS:
+        raise HTTPException(400, f"Up to {MAX_PHOTOS} photos")
+    images = []
+    for p in photo:
+        data = await p.read()
+        if len(data) > MAX_PHOTO_BYTES:
+            raise HTTPException(413, "Photo is larger than 10 MB")
+        images.append(data)
+    return await ai.check_photo(images, lang)
 
 
 # ---------- reports ----------
@@ -486,6 +497,7 @@ async def create_report(
     address: str | None = Form(None, max_length=200),
     severity: int | None = Form(None, ge=1, le=5),
     photo: UploadFile | None = File(None),
+    photos_: list[UploadFile] | None = File(None, alias="photos", description="More photos of the same problem (up to 4)"),
     voice: UploadFile | None = File(None),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
@@ -504,6 +516,10 @@ async def create_report(
         raise HTTPException(400, "A photo is required")
     if len(data) > MAX_PHOTO_BYTES:
         raise HTTPException(413, "Photo is larger than 10 MB")
+    extra = [p for p in (photos_ or []) if p.filename]
+    if len(extra) + 1 > MAX_PHOTOS:
+        raise HTTPException(400, f"Up to {MAX_PHOTOS} photos")
+    extra_urls = [await save_photo(p) for p in extra]
     name = f"{uuid.uuid4().hex}{PHOTO_TYPES[photo.content_type]}"
     (UPLOADS / name).write_bytes(data)
     fp = photos.fingerprint(data)
@@ -519,6 +535,7 @@ async def create_report(
         description=(description or "").strip() or None,
         address=(address or "").strip() or None,
         photo_url=f"/uploads/{name}",
+        extra_photos=",".join(extra_urls) or None,
         voice_url=voice_url,
         severity=severity,
         latitude=latitude,
@@ -585,6 +602,73 @@ def get_report(report_id: int, db: Session = Depends(get_db)):
     if not report:
         raise HTTPException(404, "Report not found")
     return detail(report)
+
+
+async def save_photo(p: UploadFile) -> str:
+    if (p.content_type or "") not in PHOTO_TYPES:
+        raise HTTPException(415, "Photo must be JPEG, PNG, WebP or HEIC")
+    return await save_upload(p, PHOTO_TYPES, MAX_PHOTO_BYTES, "photo")
+
+
+@app.put("/reports/{report_id}", response_model=schemas.ReportDetail, tags=["reports"])
+async def edit_report(
+    report_id: int,
+    background: BackgroundTasks,
+    category_id: int | None = Form(None),
+    description: str | None = Form(None, max_length=2000),
+    address: str | None = Form(None, max_length=200),
+    severity: int | None = Form(None, ge=0, le=5, description="0 clears it, so the AI's severity is used"),
+    keep: str | None = Form(None, description="Photos to keep, comma separated urls in the new order. Leave out to keep all."),
+    photos_: list[UploadFile] | None = File(None, alias="photos", description="New photos to add"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """The reporter changes their post: text, street, category, severity, and photos (add, remove, reorder).
+    Only while nobody is working on it yet. New photos are checked by the AI again."""
+    r = db.scalar(report_query().where(Report.id == report_id))
+    if not r:
+        raise HTTPException(404, "Report not found")
+    if r.user_id != user.id:
+        raise HTTPException(403, "Only the person who reported it can edit it")
+    if r.status != "reported" or r.claimed_by:
+        raise HTTPException(409, "Someone is already working on this, so it can't be edited")
+    if category_id is not None:
+        if not db.get(Category, category_id):
+            raise HTTPException(400, "Unknown category")
+        r.category_id = category_id
+    if description is not None:
+        r.description = description.strip() or None
+    if address is not None:
+        r.address = address.strip() or None
+    if severity is not None:
+        r.severity = severity or (r.ai_severity if r.ai_is_problem else None)
+    old = photo_urls(r)
+    kept = old if keep is None else [u for u in dict.fromkeys(keep.split(",")) if u in old]
+    new = [p for p in (photos_ or []) if p.filename]
+    if len(kept) + len(new) > MAX_PHOTOS:
+        raise HTTPException(400, f"Up to {MAX_PHOTOS} photos")
+    if not kept and not new:
+        raise HTTPException(400, "A photo is required")
+    added = [await save_photo(p) for p in new]
+    urls = kept + added
+    if urls != old:
+        for u in set(old) - set(urls):
+            (UPLOADS / Path(u).name).unlink(missing_ok=True)
+        if urls[0] != r.photo_url:  # a new cover photo: check it isn't someone else's picture
+            data = (UPLOADS / Path(urls[0]).name).read_bytes()
+            r.photo_hash = photos.fingerprint(data)
+            reused_from = _find_same_photo(db, r.photo_hash, skip=r.id)
+            flags = [f for f in flag_list(r) if not f.startswith("reused_photo:")]
+            r.ai_flags = ",".join(flags + ([f"reused_photo:{reused_from}"] if reused_from else [])) or None
+        r.photo_url, r.extra_photos = urls[0], ",".join(urls[1:]) or None
+    r.edited_at = r.updated_at = now()
+    db.commit()
+    if added:
+        r.blurred = None  # blur faces and plates in the new photos too
+        db.commit()
+        background.add_task(ai_review, r.id)
+    db.expire(r)  # the session keeps objects after commit: reload the category too
+    return detail(db.scalar(report_query().options(selectinload(Report.updates), selectinload(Report.user)).where(Report.id == r.id)))
 
 
 @app.post("/reports/{report_id}/confirm", response_model=schemas.ReportOut, tags=["reports"])

@@ -1,20 +1,29 @@
-"""Booking a mjeshtër for a paid job, with a price quote first.
+"""Booking a mjeshtër for a paid job, with a price quote first, and the money held until the job is done.
 
 1. A resident snaps a photo of the job, writes what's wrong and sends it to a verified mjeshtër.
 2. The mjeshtër looks at the photo and answers with a fee (or declines).
-3. The resident pays the fee by card or Apple Pay (Stripe PaymentSheet). MendMap keeps a commission
-   (10% by default) and Stripe sends the rest to the mjeshtër's own Stripe account (Connect payouts).
-4. When the job is done, either side marks it done.
+3. The resident pays the fee by card or Apple Pay (Stripe PaymentSheet). The money stays with MendMap.
+4. The mjeshtër does the job and taps "I finished the job".
+5. The resident taps "Job done": MendMap keeps its commission (10% by default) and sends the rest to the
+   mjeshtër's own Stripe account. If the resident doesn't answer within AUTO_RELEASE_DAYS of the mjeshtër
+   finishing, the money is sent automatically.
+6. If something is wrong, the resident taps "Report a problem" instead. The money stays held and a city admin
+   decides in the dashboard: pay the mjeshtër, or refund the resident in full.
+
+Stripe pattern: "separate charges and transfers". The payment lands on MendMap's account (with a transfer_group),
+and the payout is a Transfer to the mjeshtër's Connect account, linked to the charge (source_transaction).
 
 Stripe is called over its REST API with httpx (no extra dependency). Settings in backend/.env:
 - STRIPE_SECRET_KEY / STRIPE_PUBLISHABLE_KEY: test keys (sk_test_..., pk_test_...) until you go live.
 - STRIPE_WEBHOOK_SECRET: optional, for POST /stripe/webhook. Without it the app confirms each payment
   by asking Stripe directly (POST /bookings/{id}/confirm-payment).
 - MENDMAP_COMMISSION: share MendMap keeps, default 0.10.
+- MENDMAP_AUTO_RELEASE_DAYS: days after "I finished the job" before the money is sent anyway, default 3.
 - MENDMAP_CURRENCY: default eur. MENDMAP_MERCHANT_COUNTRY: the Stripe account's country for Apple Pay, default DE.
 - MENDMAP_DEMO_PAYMENTS=on: with no Stripe keys, "paying" just marks the booking paid. For testing only;
   never turn this on for real users.
 """
+import asyncio
 import hashlib
 import hmac
 import json
@@ -22,6 +31,7 @@ import logging
 import os
 import time
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -31,7 +41,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from . import schemas
-from .auth import current_user
+from .auth import admin_user, current_user
 from .db import SessionLocal, get_db
 from .models import Booking, Mjeshter, User, now
 from .push import send_many
@@ -71,6 +81,13 @@ def commission_rate() -> float:
         return min(0.5, max(0.0, float(os.getenv("MENDMAP_COMMISSION", "0.10"))))
     except ValueError:
         return 0.10
+
+
+def auto_release_days() -> float:
+    try:
+        return max(0.0, float(os.getenv("MENDMAP_AUTO_RELEASE_DAYS", "3")))
+    except ValueError:
+        return 3.0
 
 
 def currency() -> str:
@@ -128,6 +145,10 @@ def _get(db: Session, booking_id: int, user: User) -> Booking:
     return b
 
 
+def _release_at(b: Booking):
+    return b.worker_done_at + timedelta(days=auto_release_days()) if b.worker_done_at and b.status == "paid" else None
+
+
 def _out(b: Booking, me: User) -> schemas.BookingOut:
     commission, worker_gets = split(b.fee_cents) if b.fee_cents else (None, None)
     if b.commission_cents is not None:  # what was actually charged
@@ -139,22 +160,79 @@ def _out(b: Booking, me: User) -> schemas.BookingOut:
         customer_name=_short(b.customer.name), worker_name=_short(b.worker.name), mjeshter_id=b.mjeshter_id,
         skill=b.skill, as_role="worker" if me.id == b.worker_id else "customer",
         created_at=b.created_at, quoted_at=b.quoted_at, paid_at=b.paid_at, done_at=b.done_at,
-        commission_rate=commission_rate(),
+        commission_rate=commission_rate(), worker_done_at=b.worker_done_at, auto_release_at=_release_at(b),
+        problem_note=b.problem_note, admin_note=b.admin_note, released_at=b.released_at, refunded_at=b.refunded_at,
     )
 
 
-def _push(user: User, title: str, body: str, booking_id: int, bg: BackgroundTasks) -> None:
-    if user.push_token:
-        bg.add_task(send_many, [user.push_token], title, body, {"screen": "booking", "id": booking_id})
+def _admin_out(b: Booking, me: User) -> schemas.BookingAdmin:
+    o = schemas.BookingAdmin(**_out(b, me).model_dump())
+    o.customer_name, o.worker_name = b.customer.name, b.worker.name
+    o.customer_email, o.worker_email = b.customer.email, b.worker.email
+    o.pay_mode, o.payment_intent, o.transfer_id, o.refund_id = b.pay_mode, b.payment_intent, b.transfer_id, b.refund_id
+    return o
 
 
-def _mark_paid(db: Session, b: Booking) -> bool:
+def _push(user: User, title: str, body: str, booking_id: int, bg: BackgroundTasks | None) -> None:
+    if not user.push_token:
+        return
+    args = ([user.push_token], title, body, {"screen": "booking", "id": booking_id})
+    if bg is not None:
+        bg.add_task(send_many, *args)
+    else:
+        asyncio.get_event_loop().create_task(send_many(*args))
+
+
+def _mark_paid(db: Session, b: Booking, mode: str, charge: str | None = None) -> bool:
     if b.status != "quoted":
         return False
-    b.status, b.paid_at, b.updated_at = "paid", now(), now()
+    b.status, b.paid_at, b.updated_at, b.pay_mode = "paid", now(), now(), mode
+    b.charge_id = charge or b.charge_id
     b.commission_cents = split(b.fee_cents or 0)[0]
     db.commit()
     return True
+
+
+async def release(db: Session, b: Booking, who: str) -> None:
+    """Send the mjeshtër their share. MendMap's commission stays on its own Stripe balance."""
+    if b.status not in ("paid", "disputed"):
+        raise HTTPException(409, "There's no held payment to send")
+    commission = b.commission_cents if b.commission_cents is not None else split(b.fee_cents or 0)[0]
+    gets = (b.fee_cents or 0) - commission
+    if b.pay_mode == "stripe":
+        if not stripe_on():
+            raise HTTPException(503, "Payments aren't set up on this server yet")
+        if not b.worker.stripe_account:
+            raise HTTPException(409, "This mjeshtër can't receive payments yet")
+        if not b.charge_id:
+            pi = await stripe_call("GET", f"/payment_intents/{b.payment_intent}")
+            b.charge_id = pi.get("latest_charge")
+        tr = await stripe_call("POST", "/transfers", {
+            "amount": gets, "currency": b.currency, "destination": b.worker.stripe_account,
+            "source_transaction": b.charge_id, "transfer_group": f"booking-{b.id}",
+            "metadata": {"booking_id": b.id, "released_by": who},
+        }, idem=f"release-{b.id}")
+        b.transfer_id = tr.get("id")
+    b.status, b.released_at, b.done_at, b.updated_at = "done", now(), now(), now()
+    b.commission_cents = commission
+    db.commit()
+    log.info("Booking %s: %s cents sent to the mjeshtër (%s)", b.id, gets, who)
+
+
+async def refund(db: Session, b: Booking, who: str) -> None:
+    """Give the resident all their money back. MendMap keeps nothing."""
+    if b.status not in ("paid", "disputed"):
+        raise HTTPException(409, "Only a held payment can be refunded here")
+    if b.pay_mode == "stripe":
+        if not stripe_on():
+            raise HTTPException(503, "Payments aren't set up on this server yet")
+        rf = await stripe_call("POST", "/refunds", {
+            "payment_intent": b.payment_intent, "metadata": {"booking_id": b.id, "refunded_by": who},
+        }, idem=f"refund-{b.id}")
+        b.refund_id = rf.get("id")
+    b.status, b.refunded_at, b.updated_at, b.commission_cents = "refunded", now(), now(), 0
+    db.commit()
+    log.info("Booking %s refunded (%s)", b.id, who)
 
 
 # ---------- the booking flow ----------
@@ -277,7 +355,7 @@ def cancel(booking_id: int, bg: BackgroundTasks, user: User = Depends(current_us
     if user.id != b.customer_id:
         raise HTTPException(403, "Only the person who asked can cancel")
     if b.status not in OPEN:
-        raise HTTPException(409, "A paid booking can't be cancelled here. Contact MendMap for a refund.")
+        raise HTTPException(409, "A paid job can't be cancelled. Tap “Report a problem” instead.")
     b.status, b.updated_at = "cancelled", now()
     db.commit()
     _push(b.worker, "Request cancelled", f"{_short(user.name)} cancelled the request", b.id, bg)
@@ -286,7 +364,8 @@ def cancel(booking_id: int, bg: BackgroundTasks, user: User = Depends(current_us
 
 @router.post("/bookings/{booking_id}/pay", response_model=schemas.PayOut)
 async def pay(booking_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Start paying the quoted fee. Returns what Stripe's PaymentSheet needs (card and Apple Pay)."""
+    """Start paying the quoted fee. Returns what Stripe's PaymentSheet needs (card and Apple Pay).
+    The money lands on MendMap's account and is held there until the job is done."""
     b = _get(db, booking_id, user)
     if user.id != b.customer_id:
         raise HTTPException(403, "Only the person who asked can pay")
@@ -307,7 +386,7 @@ async def pay(booking_id: int, user: User = Depends(current_user), db: Session =
     if b.payment_intent:  # reuse the payment started earlier, unless the price changed
         pi = await stripe_call("GET", f"/payment_intents/{b.payment_intent}")
         if pi.get("status") == "succeeded":
-            _mark_paid(db, b)
+            _mark_paid(db, b, "stripe", pi.get("latest_charge"))
             raise HTTPException(409, "This booking is already paid")
         if pi.get("amount") != b.fee_cents or pi.get("status") == "canceled":
             pi = None
@@ -315,8 +394,7 @@ async def pay(booking_id: int, user: User = Depends(current_user), db: Session =
         pi = await stripe_call("POST", "/payment_intents", {
             "amount": b.fee_cents, "currency": b.currency,
             "automatic_payment_methods": {"enabled": True},
-            "application_fee_amount": commission,  # MendMap's share
-            "transfer_data": {"destination": worker.stripe_account},  # the rest goes to the mjeshtër
+            "transfer_group": f"booking-{b.id}",  # the payout to the mjeshtër comes later, when the job is done
             "description": f"MendMap booking #{b.id}",
             "metadata": {"booking_id": b.id, "customer_id": user.id, "worker_id": worker.id},
         }, idem=f"booking-{b.id}-{b.fee_cents}-{int(b.quoted_at.timestamp()) if b.quoted_at else 0}")
@@ -332,34 +410,160 @@ async def confirm_payment(booking_id: int, bg: BackgroundTasks,
     b = _get(db, booking_id, user)
     if user.id != b.customer_id:
         raise HTTPException(403, "Only the person who asked can pay")
-    if b.status == "paid":
+    if b.status != "quoted":
         return _out(b, user)
     if demo_on():
-        paid = b.status == "quoted"
+        ok, mode, charge = True, "demo", None
     else:
         if not stripe_on() or not b.payment_intent:
             raise HTTPException(409, "There's no payment to check")
         pi = await stripe_call("GET", f"/payment_intents/{b.payment_intent}")
-        paid = pi.get("status") == "succeeded" and str(pi.get("metadata", {}).get("booking_id")) == str(b.id)
-    if not paid:
+        ok = pi.get("status") == "succeeded" and str(pi.get("metadata", {}).get("booking_id")) == str(b.id)
+        mode, charge = "stripe", pi.get("latest_charge")
+    if not ok:
         raise HTTPException(402, "The payment didn't go through")
-    if _mark_paid(db, b):
-        _push(b.worker, "Paid! You can do the job", f"{_short(user.name)} paid €{b.fee_cents / 100:.2f}", b.id, bg)
+    if _mark_paid(db, b, mode, charge):
+        _push(b.worker, "Paid! You can do the job",
+              f"{_short(user.name)} paid €{b.fee_cents / 100:.2f}. MendMap holds it until the job is done.", b.id, bg)
+    return _out(b, user)
+
+
+@router.post("/bookings/{booking_id}/finished", response_model=schemas.BookingOut)
+def worker_finished(booking_id: int, bg: BackgroundTasks, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The mjeshtër says the job is finished. The resident then confirms, or the money is sent after a few days."""
+    b = _get(db, booking_id, user)
+    if user.id != b.worker_id:
+        raise HTTPException(403, "Only the mjeshtër can say the job is finished")
+    if b.status != "paid":
+        raise HTTPException(409, "Only a paid job can be finished")
+    if not b.worker_done_at:
+        b.worker_done_at, b.updated_at = now(), now()
+        db.commit()
+        days = auto_release_days()
+        _push(b.customer, "Is the job done?",
+              f"{_short(user.name)} says it's finished. Confirm, or report a problem within {days:g} days.", b.id, bg)
     return _out(b, user)
 
 
 @router.post("/bookings/{booking_id}/done", response_model=schemas.BookingOut)
-def mark_done(booking_id: int, bg: BackgroundTasks, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def mark_done(booking_id: int, bg: BackgroundTasks, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The resident confirms the job is done: the mjeshtër gets paid."""
     b = _get(db, booking_id, user)
-    if user.id not in (b.customer_id, b.worker_id):
-        raise HTTPException(403, "Not your booking")
+    if user.id != b.customer_id:
+        raise HTTPException(403, "Only the person who booked can confirm the job")
     if b.status != "paid":
         raise HTTPException(409, "Only a paid job can be marked done")
-    b.status, b.done_at, b.updated_at = "done", now(), now()
-    db.commit()
-    other = b.worker if user.id == b.customer_id else b.customer
-    _push(other, "Job done", f"Booking #{b.id} was marked done. Thank you!", b.id, bg)
+    await release(db, b, "customer")
+    _push(b.worker, "You got paid", f"{_short(user.name)} confirmed the job. €{(b.fee_cents - b.commission_cents) / 100:.2f} is on its way.", b.id, bg)
     return _out(b, user)
+
+
+@router.post("/bookings/{booking_id}/problem", response_model=schemas.BookingOut)
+def report_problem(booking_id: int, body: schemas.ProblemIn, bg: BackgroundTasks,
+                   user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The resident isn't happy: the money stays held and a city admin decides (pay out or refund)."""
+    b = _get(db, booking_id, user)
+    if user.id != b.customer_id:
+        raise HTTPException(403, "Only the person who booked can report a problem")
+    if b.status != "paid":
+        raise HTTPException(409, "You can report a problem only while the payment is held")
+    b.status, b.problem_note, b.updated_at = "disputed", body.note.strip(), now()
+    db.commit()
+    _push(b.worker, "The resident reported a problem",
+          f"{_short(user.name)}: {b.problem_note[:80]}. MendMap will look at it.", b.id, bg)
+    admins = db.scalars(select(User.push_token).where(User.role == "admin", User.push_token.is_not(None))).all()
+    if admins:
+        bg.add_task(send_many, list(admins), "Booking problem", f"Booking #{b.id}: {b.problem_note[:80]}",
+                    {"screen": "booking", "id": b.id})
+    return _out(b, user)
+
+
+# ---------- automatic payout when the resident doesn't answer ----------
+async def release_due() -> int:
+    """Send the money for jobs the mjeshtër finished AUTO_RELEASE_DAYS ago without an answer from the resident."""
+    cutoff = now() - timedelta(days=auto_release_days())
+    sent = 0
+    with SessionLocal() as db:
+        due = db.scalars(select(Booking).where(Booking.status == "paid", Booking.worker_done_at.is_not(None),
+                                               Booking.worker_done_at <= cutoff)).all()
+        for b in due:
+            try:
+                await release(db, b, "auto")
+            except HTTPException as exc:
+                log.warning("Auto payout of booking %s failed: %s", b.id, exc.detail)
+                db.rollback()
+                continue
+            sent += 1
+            for u, text in ((b.worker, "The money for your job is on its way."),
+                            (b.customer, f"No problem was reported, so {_short(b.worker.name)} was paid.")):
+                if u.push_token:
+                    await send_many([u.push_token], "Job paid", text, {"screen": "booking", "id": b.id})
+    return sent
+
+
+async def release_loop() -> None:
+    while True:
+        try:
+            await release_due()
+        except Exception as exc:  # never let the loop die
+            log.warning("Automatic payouts failed: %s", exc)
+        await asyncio.sleep(600)
+
+
+# ---------- city admins: held money, problems, payouts and refunds ----------
+@router.get("/admin/bookings", response_model=list[schemas.BookingAdmin], tags=["admin"])
+def admin_bookings(status: str | None = None, me: User = Depends(admin_user), db: Session = Depends(get_db)):
+    q = select(Booking)
+    if status:
+        q = q.where(Booking.status.in_(status.split(",")))
+    rows = db.scalars(q.order_by(Booking.updated_at.desc()).limit(300)).all()
+    first = {"disputed": 0, "paid": 1}
+    return [_admin_out(b, me) for b in sorted(rows, key=lambda b: first.get(b.status, 2))]
+
+
+@router.get("/admin/bookings/summary", response_model=schemas.BookingSummary, tags=["admin"])
+def admin_bookings_summary(_: User = Depends(admin_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(Booking).where(Booking.status.in_(("paid", "disputed", "done", "refunded")))).all()
+    s = schemas.BookingSummary(currency=currency(), commission_rate=commission_rate(), auto_release_days=auto_release_days(),
+                               stripe=stripe_on(), demo=demo_on())
+    for b in rows:
+        fee = b.fee_cents or 0
+        if b.status in ("paid", "disputed"):
+            s.held_cents += fee
+            s.held += 1
+            s.disputed += b.status == "disputed"
+        elif b.status == "done":
+            s.paid_out_cents += fee - (b.commission_cents or 0)
+            s.earned_cents += b.commission_cents or 0
+            s.done += 1
+        else:
+            s.refunded_cents += fee
+            s.refunded += 1
+    return s
+
+
+@router.post("/admin/bookings/{booking_id}/release", response_model=schemas.BookingAdmin, tags=["admin"])
+async def admin_release(booking_id: int, body: schemas.NoteIn, bg: BackgroundTasks,
+                        me: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Decide for the mjeshtër: send them their share."""
+    b = _get(db, booking_id, me)
+    b.admin_note = (body.note or "").strip() or b.admin_note
+    await release(db, b, "admin")
+    _push(b.worker, "You got paid", "MendMap sent the money for your job.", b.id, bg)
+    _push(b.customer, "Booking closed", b.admin_note or "MendMap looked at the problem and paid the mjeshtër.", b.id, bg)
+    return _admin_out(b, me)
+
+
+@router.post("/admin/bookings/{booking_id}/refund", response_model=schemas.BookingAdmin, tags=["admin"])
+async def admin_refund(booking_id: int, body: schemas.NoteIn, bg: BackgroundTasks,
+                       me: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Decide for the resident: give all their money back."""
+    b = _get(db, booking_id, me)
+    b.admin_note = (body.note or "").strip() or b.admin_note
+    await refund(db, b, "admin")
+    _push(b.customer, "You got a refund", b.admin_note or "MendMap refunded your payment in full.", b.id, bg)
+    _push(b.worker, "Booking refunded", b.admin_note or "MendMap refunded the resident for this job.", b.id, bg)
+    return _admin_out(b, me)
 
 
 # ---------- Stripe webhook (optional) ----------
@@ -390,9 +594,10 @@ async def stripe_webhook(request: Request):
         if event.get("type") == "payment_intent.succeeded":
             bid = obj.get("metadata", {}).get("booking_id")
             b = db.get(Booking, int(bid)) if bid and str(bid).isdigit() else None
-            if b and b.payment_intent == obj.get("id") and _mark_paid(db, b):
+            if b and b.payment_intent == obj.get("id") and _mark_paid(db, b, "stripe", obj.get("latest_charge")):
                 await send_many([b.worker.push_token] if b.worker.push_token else [], "Paid! You can do the job",
-                                f"Booking #{b.id} was paid", {"screen": "booking", "id": b.id})
+                                f"Booking #{b.id} was paid. MendMap holds it until the job is done.",
+                                {"screen": "booking", "id": b.id})
         elif event.get("type") == "account.updated":
             u = db.scalar(select(User).where(User.stripe_account == obj.get("id")))
             if u:

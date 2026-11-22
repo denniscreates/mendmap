@@ -72,6 +72,7 @@ function Root({ fontsLoaded }: { fontsLoaded: boolean }) {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false, animation: "fade" }} />
           <Stack.Screen name="report/[id]" options={{ title: t("report") }} />
+          <Stack.Screen name="report-edit/[id]" options={{ title: t("editPost"), presentation: "modal" }} />
           <Stack.Screen name="my-reports" options={{ title: t("tabMine"), headerBackTitle: t("tabSettings") }} />
           <Stack.Screen name="rewards" options={{ title: t("rewardsTitle") }} />
           <Stack.Screen name="mjeshtrit" options={{ title: t("mjTitle") }} />

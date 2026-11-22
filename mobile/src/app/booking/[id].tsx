@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressa
 import { Button, Input, T } from "../../components/ui";
 import { api, authHeaders, bookingPhotoUrl, type Booking } from "../../lib/api";
 import { useI18n, type TKey } from "../../lib/i18n";
+import { parseUtc } from "../../lib/events";
 import { money, statusTone } from "../../lib/money";
 import { payWithStripe } from "../../lib/pay";
 import { useStyles, useTheme, type Palette } from "../../lib/theme";
@@ -12,6 +13,8 @@ import { useStyles, useTheme, type Palette } from "../../lib/theme";
 /**
  * One booking. The mjeshtër sees the photo and names a price; the resident pays it with Apple Pay or card.
  * MendMap's commission is part of the price: the mjeshtër sees what they get, the resident sees the fee is included.
+ * The money is held by MendMap: the mjeshtër taps "I finished the job", the resident confirms (or it's sent after a
+ * few days), or reports a problem and a city admin decides between paying out and a full refund.
  */
 export default function BookingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,6 +26,7 @@ export default function BookingScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const [fee, setFee] = useState("");
   const [note, setNote] = useState("");
+  const [problem, setProblem] = useState<string | null>(null); // the "what's wrong?" box, when open
 
   const show = useCallback((x: Booking) => {
     setB(x);
@@ -45,8 +49,10 @@ export default function BookingScreen() {
     try {
       show(await job());
       if (done) Alert.alert("MendMap", done);
+      return true;
     } catch (e) {
       Alert.alert("MendMap", tErr((e as Error).message));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -68,6 +74,9 @@ export default function BookingScreen() {
   const feeNum = Number(fee.replace(",", "."));
   const feeOk = Number.isFinite(feeNum) && feeNum >= 5 && feeNum <= 5000;
   const previewCut = Math.round(feeNum * 100 * b.commission_rate);
+  const day = (iso: string | null) =>
+    iso ? parseUtc(iso).toLocaleDateString(locale, { weekday: "short", day: "numeric", month: "short" }) : "";
+  const releaseDay = day(b.auto_release_at);
 
   const pay = async () => {
     setBusy("pay");
@@ -142,7 +151,44 @@ export default function BookingScreen() {
             </View>
           </>
         )}
-        {!worker && b.status === "paid" && <T style={[s.muted, { textAlign: "center" }]}>{t("bkPaid", { name: b.worker_name })}</T>}
+        {!worker && b.status === "paid" && (
+          <View style={[s.card, { borderColor: colors.blue }]}>
+            <View style={s.line}>
+              <Ionicons name="shield-checkmark" size={22} color={colors.blue} />
+              <T style={{ flex: 1 }}>{b.worker_done_at ? t("bkConfirmAsk", { name: b.worker_name, date: releaseDay }) : t("bkPaid", { name: b.worker_name })}</T>
+            </View>
+            <Button title={t("bkDone", { name: b.worker_name })} loading={busy === "done"} icon={<Ionicons name="checkmark-done" size={18} color="#fff" />}
+              onPress={() => ask(t("bkDone", { name: b.worker_name }), t("bkDoneAsk", { name: b.worker_name }), t("bkDone", { name: b.worker_name }),
+                () => void run("done", () => api.bookingDone(b.id), t("bkThanks")))} />
+            {problem === null ? (
+              <Button title={t("bkProblem")} variant="ghost" icon={<Ionicons name="alert-circle-outline" size={18} color={colors.danger} />}
+                onPress={() => setProblem("")} />
+            ) : (
+              <>
+                <T style={s.muted}>{t("bkProblemHint")}</T>
+                <Input value={problem} onChangeText={setProblem} placeholder={t("bkProblem")} multiline maxLength={1000} style={{ minHeight: 80 }} />
+                <Button title={t("bkProblemSend")} variant="orange" disabled={problem.trim().length < 5} loading={busy === "problem"}
+                  onPress={() => void run("problem", () => api.bookingProblem(b.id, problem.trim()), t("bkProblemSent")).then((ok) => ok && setProblem(null))} />
+                <Button title={t("cancel")} variant="ghost" onPress={() => setProblem(null)} />
+              </>
+            )}
+          </View>
+        )}
+        {b.status === "disputed" && (
+          <View style={[s.card, { borderColor: colors.danger }]}>
+            <T>{worker ? t("bkDisputedWorker") : t("bkDisputed")}</T>
+            {!!b.problem_note && <T style={{ fontStyle: "italic" }}>“{b.problem_note}”</T>}
+          </View>
+        )}
+        {b.status === "done" && (
+          <T style={[s.muted, { textAlign: "center" }]}>
+            {worker ? t("bkReleasedWorker", { amount: money(b.worker_gets_cents, b.currency, locale) }) : t("bkReleased", { name: b.worker_name })}
+          </T>
+        )}
+        {b.status === "refunded" && <T style={[s.muted, { textAlign: "center" }]}>{t("bkRefundedText")}</T>}
+        {!!b.admin_note && (b.status === "done" || b.status === "refunded") && (
+          <T style={[s.muted, { textAlign: "center", fontStyle: "italic" }]}>{t("bkMendMapSays", { note: b.admin_note })}</T>
+        )}
         {b.status === "declined" && (
           <T style={[s.muted, { textAlign: "center" }]}>{t("bkDeclinedBy", { name: b.worker_name })}{b.decline_note ? ` “${b.decline_note}”` : ""}</T>
         )}
@@ -166,11 +212,15 @@ export default function BookingScreen() {
               onPress={() => run("quote", () => api.quoteBooking(b.id, Math.round(feeNum * 100) / 100, note.trim()))} />
           </View>
         )}
-        {worker && b.status === "paid" && <T style={[s.muted, { textAlign: "center" }]}>{t("bkPaidWorker")}</T>}
-
-        {b.status === "paid" && (
-          <Button title={t("bkDone")} loading={busy === "done"} icon={<Ionicons name="checkmark-done" size={18} color="#fff" />}
-            onPress={() => ask(t("bkDone"), t("bkDoneAsk"), t("bkDone"), () => void run("done", () => api.bookingDone(b.id), t("bkThanks")))} />
+        {worker && b.status === "paid" && !b.worker_done_at && (
+          <>
+            <T style={[s.muted, { textAlign: "center" }]}>{t("bkPaidWorker")}</T>
+            <Button title={t("bkFinished")} loading={busy === "finished"} icon={<Ionicons name="checkmark-done" size={18} color="#fff" />}
+              onPress={() => ask(t("bkFinished"), t("bkFinishedAsk"), t("bkFinished"), () => void run("finished", () => api.bookingFinished(b.id)))} />
+          </>
+        )}
+        {worker && b.status === "paid" && !!b.worker_done_at && (
+          <T style={[s.muted, { textAlign: "center" }]}>{t("bkFinishedWait", { name: b.customer_name, date: releaseDay })}</T>
         )}
         {worker && open && (
           <Button title={t("bkDecline")} variant="ghost" loading={busy === "decline"}

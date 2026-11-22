@@ -45,6 +45,7 @@ export async function addDraft(report: NewReport, categoryName: string) {
   const draft: Draft = {
     ...report,
     photoUri: persistFile(report.photoUri, `draft-${localId}.jpg`),
+    morePhotos: report.morePhotos?.map((u, i) => persistFile(u, `draft-${localId}-${i + 2}.jpg`) ?? u),
     voiceUri: persistFile(report.voiceUri, `draft-${localId}.m4a`),
     localId,
     savedAt: new Date().toISOString(),
